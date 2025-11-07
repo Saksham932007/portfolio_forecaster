@@ -188,6 +188,7 @@ def sidebar_navigation():
         "🤖 Deep Learning": "deep_learning",
         "💼 Portfolio Optimization": "portfolio",
         "🎯 Backtesting": "backtest",
+        "🛡️ Risk Management": "risk",
         "❓ Help": "help"
     }
     
@@ -4156,9 +4157,1221 @@ def page_backtesting():
     """)
 
 
-def page_help():
-    """Help and documentation page."""
-    st.markdown('<div class="main-header">Help & Documentation</div>', unsafe_allow_html=True)
+def page_risk_management():
+    """Advanced risk management page."""
+    st.markdown('<div class="main-header">Advanced Risk Management</div>', unsafe_allow_html=True)
+    
+    if 'data' not in st.session_state or st.session_state.data is None:
+        st.warning("Please load data first from the Home page.")
+        return
+    
+    data = st.session_state.data
+    summary = get_data_summary(data)
+    
+    st.markdown("""
+    Comprehensive risk analysis including Value at Risk, Expected Shortfall, stress testing, 
+    and scenario analysis for portfolio risk management.
+    """)
+    
+    # Create tabs for different risk management approaches
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Risk Metrics", "⚠️ VaR Analysis", "🎯 Stress Testing", "📈 Scenario Analysis", "🛡️ Risk Controls"])
+    
+    with tab1:
+        st.markdown("### Portfolio Risk Metrics")
+        st.markdown("Calculate comprehensive risk metrics for individual assets and portfolios.")
+        
+        # Asset selection for risk analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            risk_assets = st.multiselect(
+                "Select Assets for Risk Analysis:",
+                summary['tickers'],
+                default=summary['tickers'][:4],
+                key="risk_assets"
+            )
+            
+            risk_timeframe = st.selectbox(
+                "Analysis Timeframe:",
+                ['1 Month', '3 Months', '6 Months', '1 Year', '2 Years'],
+                index=3,
+                key="risk_timeframe"
+            )
+        
+        with col2:
+            risk_confidence = st.selectbox(
+                "Confidence Level:",
+                ['90%', '95%', '99%'],
+                index=1,
+                key="risk_confidence"
+            )
+            
+            portfolio_value = st.number_input(
+                "Portfolio Value ($):",
+                min_value=1000,
+                value=1000000,
+                step=10000,
+                key="portfolio_value"
+            )
+        
+        if len(risk_assets) >= 1:
+            if st.button("Calculate Risk Metrics", type="primary", key="calc_risk_metrics"):
+                with st.spinner("Calculating comprehensive risk metrics..."):
+                    try:
+                        # Get timeframe in days
+                        timeframe_map = {'1 Month': 30, '3 Months': 90, '6 Months': 180, '1 Year': 365, '2 Years': 730}
+                        days_back = timeframe_map[risk_timeframe]
+                        
+                        start_date = datetime.now() - timedelta(days=days_back)
+                        confidence_level = float(risk_confidence.strip('%')) / 100
+                        
+                        # Get data for all selected assets
+                        risk_data = {}
+                        for asset in risk_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            mask = asset_prices.index >= pd.Timestamp(start_date)
+                            risk_data[asset] = asset_prices[mask]
+                        
+                        risk_df = pd.DataFrame(risk_data).dropna()
+                        returns_df = risk_df.pct_change().dropna()
+                        
+                        # Calculate individual asset risk metrics
+                        st.markdown("#### Individual Asset Risk Metrics")
+                        
+                        asset_metrics = {}
+                        for asset in risk_assets:
+                            asset_returns = returns_df[asset]
+                            
+                            # Basic statistics
+                            mean_return = asset_returns.mean() * 252
+                            volatility = asset_returns.std() * np.sqrt(252)
+                            
+                            # Value at Risk
+                            var_1d = np.percentile(asset_returns, (1 - confidence_level) * 100)
+                            var_annual = var_1d * np.sqrt(252)
+                            
+                            # Expected Shortfall (Conditional VaR)
+                            es_1d = asset_returns[asset_returns <= var_1d].mean()
+                            es_annual = es_1d * np.sqrt(252)
+                            
+                            # Maximum drawdown
+                            cumulative = (1 + asset_returns).cumprod()
+                            running_max = cumulative.cummax()
+                            drawdowns = (cumulative - running_max) / running_max
+                            max_drawdown = drawdowns.min()
+                            
+                            # Skewness and kurtosis
+                            returns_skew = skew(asset_returns)
+                            returns_kurtosis = kurtosis(asset_returns)
+                            
+                            # Beta (using first asset as market proxy)
+                            if asset != risk_assets[0]:
+                                market_returns = returns_df[risk_assets[0]]
+                                covariance = np.cov(asset_returns, market_returns)[0, 1]
+                                market_variance = np.var(market_returns)
+                                beta = covariance / market_variance if market_variance > 0 else 0
+                            else:
+                                beta = 1.0
+                            
+                            asset_metrics[asset] = {
+                                'Mean Return': mean_return,
+                                'Volatility': volatility,
+                                'VaR (1d)': var_1d,
+                                'VaR (Annual)': var_annual,
+                                'ES (1d)': es_1d,
+                                'ES (Annual)': es_annual,
+                                'Max Drawdown': max_drawdown,
+                                'Skewness': returns_skew,
+                                'Kurtosis': returns_kurtosis,
+                                'Beta': beta
+                            }
+                        
+                        # Display individual metrics
+                        metrics_df = pd.DataFrame(asset_metrics).T
+                        
+                        display_metrics = pd.DataFrame({
+                            'Asset': metrics_df.index,
+                            'Ann. Return': [f"{r:.2%}" for r in metrics_df['Mean Return']],
+                            'Volatility': [f"{r:.2%}" for r in metrics_df['Volatility']],
+                            f'VaR {risk_confidence}': [f"{r:.2%}" for r in metrics_df['VaR (Annual)']],
+                            f'ES {risk_confidence}': [f"{r:.2%}" for r in metrics_df['ES (Annual)']],
+                            'Max DD': [f"{r:.2%}" for r in metrics_df['Max Drawdown']],
+                            'Skewness': [f"{r:.3f}" for r in metrics_df['Skewness']],
+                            'Kurtosis': [f"{r:.3f}" for r in metrics_df['Kurtosis']],
+                            'Beta': [f"{r:.3f}" for r in metrics_df['Beta']]
+                        })
+                        
+                        st.dataframe(display_metrics, hide_index=True)
+                        
+                        # Risk ranking
+                        st.markdown("#### Risk Ranking")
+                        
+                        # Calculate risk score (lower is better)
+                        risk_scores = {}
+                        for asset in risk_assets:
+                            # Combine volatility, VaR, and max drawdown for risk score
+                            vol_rank = metrics_df.loc[asset, 'Volatility']
+                            var_rank = abs(metrics_df.loc[asset, 'VaR (Annual)'])
+                            dd_rank = abs(metrics_df.loc[asset, 'Max Drawdown'])
+                            
+                            risk_score = (vol_rank + var_rank + dd_rank) / 3
+                            risk_scores[asset] = risk_score
+                        
+                        # Sort by risk score
+                        sorted_risk = sorted(risk_scores.items(), key=lambda x: x[1])
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("**Lowest Risk Assets:**")
+                            for i, (asset, score) in enumerate(sorted_risk[:3]):
+                                st.write(f"{i+1}. {asset} (Risk Score: {score:.3f})")
+                        
+                        with col2:
+                            st.markdown("**Highest Risk Assets:**")
+                            for i, (asset, score) in enumerate(sorted_risk[-3:]):
+                                st.write(f"{i+1}. {asset} (Risk Score: {score:.3f})")
+                        
+                        # Risk visualization
+                        st.markdown("#### Risk-Return Scatter Plot")
+                        
+                        fig_risk_return = go.Figure()
+                        
+                        fig_risk_return.add_trace(go.Scatter(
+                            x=[metrics_df.loc[asset, 'Volatility'] * 100 for asset in risk_assets],
+                            y=[metrics_df.loc[asset, 'Mean Return'] * 100 for asset in risk_assets],
+                            mode='markers+text',
+                            text=risk_assets,
+                            textposition='top center',
+                            marker=dict(
+                                size=[abs(metrics_df.loc[asset, 'Max Drawdown']) * 1000 for asset in risk_assets],
+                                color=[metrics_df.loc[asset, 'Beta'] for asset in risk_assets],
+                                colorscale='RdYlBu',
+                                showscale=True,
+                                colorbar=dict(title="Beta")
+                            ),
+                            name="Assets"
+                        ))
+                        
+                        fig_risk_return.update_layout(
+                            title="Risk-Return Analysis (Bubble size = Max Drawdown)",
+                            xaxis_title="Volatility (%)",
+                            yaxis_title="Expected Return (%)",
+                            height=500
+                        )
+                        
+                        st.plotly_chart(fig_risk_return, width='stretch')
+                        
+                        # Portfolio-level risk (if multiple assets)
+                        if len(risk_assets) > 1:
+                            st.markdown("#### Portfolio Risk Analysis")
+                            
+                            # Equal weight portfolio
+                            equal_weights = np.array([1/len(risk_assets)] * len(risk_assets))
+                            portfolio_returns = (returns_df * equal_weights).sum(axis=1)
+                            
+                            # Portfolio metrics
+                            port_mean_return = portfolio_returns.mean() * 252
+                            port_volatility = portfolio_returns.std() * np.sqrt(252)
+                            port_var_1d = np.percentile(portfolio_returns, (1 - confidence_level) * 100)
+                            port_var_annual = port_var_1d * np.sqrt(252)
+                            port_es_1d = portfolio_returns[portfolio_returns <= port_var_1d].mean()
+                            port_es_annual = port_es_1d * np.sqrt(252)
+                            
+                            # Portfolio maximum drawdown
+                            port_cumulative = (1 + portfolio_returns).cumprod()
+                            port_running_max = port_cumulative.cummax()
+                            port_drawdowns = (port_cumulative - port_running_max) / port_running_max
+                            port_max_drawdown = port_drawdowns.min()
+                            
+                            # Display portfolio metrics
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("Portfolio Return", f"{port_mean_return:.2%}")
+                            with col2:
+                                st.metric("Portfolio Volatility", f"{port_volatility:.2%}")
+                            with col3:
+                                st.metric(f"Portfolio VaR {risk_confidence}", f"{port_var_annual:.2%}")
+                            with col4:
+                                st.metric("Portfolio Max DD", f"{port_max_drawdown:.2%}")
+                            
+                            # Diversification benefit
+                            weighted_vol = np.sqrt(np.dot(equal_weights**2, [metrics_df.loc[asset, 'Volatility']**2 for asset in risk_assets]))
+                            diversification_ratio = weighted_vol / port_volatility
+                            
+                            st.info(f"🎯 **Diversification Benefit:** {diversification_ratio:.2f}x reduction in risk through diversification")
+                    
+                    except Exception as e:
+                        st.error(f"Risk metrics calculation failed: {str(e)}")
+        else:
+            st.info("Please select at least 1 asset for risk analysis.")
+    
+    with tab2:
+        st.markdown("### Value at Risk (VaR) Analysis")
+        st.markdown("Detailed VaR analysis using different methodologies.")
+        
+        # VaR configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            var_assets = st.multiselect(
+                "Select Assets:",
+                summary['tickers'],
+                default=summary['tickers'][:3],
+                key="var_assets"
+            )
+            
+            var_method = st.selectbox(
+                "VaR Methodology:",
+                ['Historical Simulation', 'Parametric (Normal)', 'Monte Carlo'],
+                key="var_method"
+            )
+        
+        with col2:
+            var_confidence_levels = st.multiselect(
+                "Confidence Levels:",
+                ['90%', '95%', '99%', '99.9%'],
+                default=['95%', '99%'],
+                key="var_confidence_levels"
+            )
+            
+            var_horizon = st.selectbox(
+                "Time Horizon:",
+                ['1 Day', '1 Week', '1 Month'],
+                key="var_horizon"
+            )
+        
+        if len(var_assets) >= 1 and len(var_confidence_levels) >= 1:
+            if st.button("Calculate VaR Analysis", key="calc_var"):
+                with st.spinner("Performing VaR analysis..."):
+                    try:
+                        # Get data
+                        var_data = {}
+                        for asset in var_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            var_data[asset] = asset_prices.tail(500)  # Use last 500 days
+                        
+                        var_df = pd.DataFrame(var_data).dropna()
+                        returns_df = var_df.pct_change().dropna()
+                        
+                        # Time horizon adjustment
+                        horizon_map = {'1 Day': 1, '1 Week': 5, '1 Month': 21}
+                        horizon_days = horizon_map[var_horizon]
+                        
+                        # Portfolio returns (equal weight)
+                        equal_weights = np.array([1/len(var_assets)] * len(var_assets))
+                        portfolio_returns = (returns_df * equal_weights).sum(axis=1)
+                        
+                        # Calculate VaR using different methods
+                        var_results = {}
+                        
+                        for conf_str in var_confidence_levels:
+                            confidence = float(conf_str.strip('%')) / 100
+                            alpha = 1 - confidence
+                            
+                            if var_method == 'Historical Simulation':
+                                # Historical simulation VaR
+                                var_1d = np.percentile(portfolio_returns, alpha * 100)
+                                var_horizon_adj = var_1d * np.sqrt(horizon_days)
+                                
+                            elif var_method == 'Parametric (Normal)':
+                                # Parametric VaR assuming normal distribution
+                                mean_return = portfolio_returns.mean()
+                                vol = portfolio_returns.std()
+                                var_1d = mean_return + vol * stats.norm.ppf(alpha)
+                                var_horizon_adj = mean_return * horizon_days + vol * np.sqrt(horizon_days) * stats.norm.ppf(alpha)
+                                
+                            else:  # Monte Carlo
+                                # Monte Carlo simulation
+                                np.random.seed(42)
+                                mean_return = portfolio_returns.mean()
+                                vol = portfolio_returns.std()
+                                
+                                # Generate random scenarios
+                                n_simulations = 10000
+                                random_returns = np.random.normal(mean_return, vol, n_simulations)
+                                
+                                # Adjust for horizon
+                                if horizon_days > 1:
+                                    simulated_returns = []
+                                    for _ in range(n_simulations):
+                                        path_returns = np.random.normal(mean_return, vol, horizon_days)
+                                        total_return = np.prod(1 + path_returns) - 1
+                                        simulated_returns.append(total_return)
+                                    random_returns = np.array(simulated_returns)
+                                else:
+                                    random_returns = random_returns
+                                
+                                var_horizon_adj = np.percentile(random_returns, alpha * 100)
+                                var_1d = var_horizon_adj if horizon_days == 1 else var_horizon_adj / np.sqrt(horizon_days)
+                            
+                            # Expected Shortfall
+                            if var_method == 'Historical Simulation':
+                                es_1d = portfolio_returns[portfolio_returns <= var_1d].mean()
+                                es_horizon_adj = es_1d * np.sqrt(horizon_days)
+                            elif var_method == 'Monte Carlo':
+                                es_horizon_adj = random_returns[random_returns <= var_horizon_adj].mean()
+                                es_1d = es_horizon_adj if horizon_days == 1 else es_horizon_adj / np.sqrt(horizon_days)
+                            else:  # Parametric
+                                mean_return = portfolio_returns.mean()
+                                vol = portfolio_returns.std()
+                                es_1d = mean_return - vol * stats.norm.pdf(stats.norm.ppf(alpha)) / alpha
+                                es_horizon_adj = mean_return * horizon_days - vol * np.sqrt(horizon_days) * stats.norm.pdf(stats.norm.ppf(alpha)) / alpha
+                            
+                            var_results[conf_str] = {
+                                'VaR (1 Day)': var_1d,
+                                f'VaR ({var_horizon})': var_horizon_adj,
+                                'ES (1 Day)': es_1d,
+                                f'ES ({var_horizon})': es_horizon_adj
+                            }
+                        
+                        # Display VaR results
+                        st.markdown(f"#### VaR Results - {var_method}")
+                        
+                        var_display_df = pd.DataFrame(var_results).T
+                        var_display_df = var_display_df.applymap(lambda x: f"{x:.2%}")
+                        
+                        st.dataframe(var_display_df)
+                        
+                        # VaR at different confidence levels chart
+                        st.markdown("#### VaR by Confidence Level")
+                        
+                        confidence_values = [float(conf.strip('%')) for conf in var_confidence_levels]
+                        var_values = [var_results[conf][f'VaR ({var_horizon})'] * 100 for conf in var_confidence_levels]
+                        es_values = [var_results[conf][f'ES ({var_horizon})'] * 100 for conf in var_confidence_levels]
+                        
+                        fig_var = go.Figure()
+                        
+                        fig_var.add_trace(go.Scatter(
+                            x=confidence_values,
+                            y=var_values,
+                            mode='lines+markers',
+                            name='VaR',
+                            line=dict(color='red', width=3)
+                        ))
+                        
+                        fig_var.add_trace(go.Scatter(
+                            x=confidence_values,
+                            y=es_values,
+                            mode='lines+markers',
+                            name='Expected Shortfall',
+                            line=dict(color='darkred', width=3, dash='dash')
+                        ))
+                        
+                        fig_var.update_layout(
+                            title=f"VaR and ES by Confidence Level ({var_horizon})",
+                            xaxis_title="Confidence Level (%)",
+                            yaxis_title="Loss (%)",
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_var, width='stretch')
+                        
+                        # Backtesting (if using historical simulation)
+                        if var_method == 'Historical Simulation':
+                            st.markdown("#### VaR Backtesting")
+                            
+                            # Use 95% VaR for backtesting
+                            var_95 = var_results['95%']['VaR (1 Day)']
+                            
+                            # Count violations
+                            violations = (portfolio_returns < var_95).sum()
+                            total_observations = len(portfolio_returns)
+                            violation_rate = violations / total_observations
+                            expected_violations = 0.05  # 5% for 95% VaR
+                            
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Actual Violations", f"{violations}")
+                            with col2:
+                                st.metric("Violation Rate", f"{violation_rate:.2%}")
+                            with col3:
+                                expected_count = int(total_observations * expected_violations)
+                                st.metric("Expected Violations", f"{expected_count}")
+                            
+                            # Traffic light system for VaR performance
+                            if abs(violation_rate - expected_violations) < 0.01:  # Within 1%
+                                st.success("✅ VaR model performance: Excellent")
+                            elif abs(violation_rate - expected_violations) < 0.02:  # Within 2%
+                                st.warning("⚠️ VaR model performance: Acceptable")
+                            else:
+                                st.error("❌ VaR model performance: Poor - Consider model recalibration")
+                    
+                    except Exception as e:
+                        st.error(f"VaR analysis failed: {str(e)}")
+        else:
+            st.info("Please select assets and confidence levels for VaR analysis.")
+    
+    with tab3:
+        st.markdown("### Stress Testing")
+        st.markdown("Test portfolio performance under extreme market conditions.")
+        
+        # Stress testing configuration
+        stress_assets = st.multiselect(
+            "Select Assets for Stress Testing:",
+            summary['tickers'],
+            default=summary['tickers'][:3],
+            key="stress_assets"
+        )
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            stress_type = st.selectbox(
+                "Stress Test Type:",
+                ['Historical Scenarios', 'Custom Shocks', 'Correlation Breakdown'],
+                key="stress_type"
+            )
+        
+        with col2:
+            stress_portfolio_value = st.number_input(
+                "Portfolio Value ($):",
+                min_value=1000,
+                value=1000000,
+                step=10000,
+                key="stress_portfolio_value"
+            )
+        
+        if len(stress_assets) >= 1:
+            if stress_type == 'Historical Scenarios':
+                st.markdown("#### Historical Crisis Scenarios")
+                
+                # Define historical crisis periods
+                crisis_periods = {
+                    'COVID-19 Crash (Feb-Mar 2020)': ('2020-02-01', '2020-03-31'),
+                    'Global Financial Crisis (2008)': ('2008-09-01', '2008-12-31'),
+                    'Dot-com Crash (2000-2002)': ('2000-03-01', '2002-10-31'),
+                    'Black Monday (1987)': ('1987-10-01', '1987-11-30')
+                }
+                
+                selected_crisis = st.selectbox(
+                    "Select Historical Crisis:",
+                    list(crisis_periods.keys()),
+                    key="selected_crisis"
+                )
+                
+                if st.button("Run Historical Stress Test", key="run_historical_stress"):
+                    with st.spinner("Running historical stress test..."):
+                        try:
+                            start_crisis, end_crisis = crisis_periods[selected_crisis]
+                            
+                            # Get data for crisis period
+                            crisis_data = {}
+                            for asset in stress_assets:
+                                asset_prices = get_ticker_data(data, asset, 'close')
+                                mask = (asset_prices.index >= pd.Timestamp(start_crisis)) & (asset_prices.index <= pd.Timestamp(end_crisis))
+                                crisis_data[asset] = asset_prices[mask]
+                            
+                            crisis_df = pd.DataFrame(crisis_data).dropna()
+                            
+                            if len(crisis_df) > 0:
+                                crisis_returns = crisis_df.pct_change().dropna()
+                                
+                                # Calculate total returns during crisis
+                                total_returns = (crisis_df.iloc[-1] / crisis_df.iloc[0] - 1)
+                                
+                                # Portfolio impact (equal weights)
+                                equal_weights = np.array([1/len(stress_assets)] * len(stress_assets))
+                                portfolio_impact = np.dot(equal_weights, total_returns)
+                                portfolio_loss = stress_portfolio_value * portfolio_impact
+                                
+                                st.markdown(f"#### {selected_crisis} Impact")
+                                
+                                # Individual asset impacts
+                                impact_df = pd.DataFrame({
+                                    'Asset': stress_assets,
+                                    'Total Return': [f"{r:.2%}" for r in total_returns],
+                                    'Dollar Impact': [f"${stress_portfolio_value * w * r:,.0f}" for w, r in zip(equal_weights, total_returns)]
+                                })
+                                
+                                st.dataframe(impact_df, hide_index=True)
+                                
+                                # Portfolio summary
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("Portfolio Impact", f"{portfolio_impact:.2%}")
+                                with col2:
+                                    st.metric("Dollar Loss", f"${portfolio_loss:,.0f}")
+                                
+                                # Visualization
+                                fig_stress = go.Figure()
+                                
+                                for asset in stress_assets:
+                                    normalized_prices = crisis_df[asset] / crisis_df[asset].iloc[0]
+                                    fig_stress.add_trace(go.Scatter(
+                                        x=crisis_df.index,
+                                        y=normalized_prices,
+                                        mode='lines',
+                                        name=asset,
+                                        line=dict(width=2)
+                                    ))
+                                
+                                fig_stress.update_layout(
+                                    title=f"Price Performance During {selected_crisis}",
+                                    xaxis_title="Date",
+                                    yaxis_title="Normalized Price",
+                                    height=400
+                                )
+                                
+                                st.plotly_chart(fig_stress, width='stretch')
+                                
+                                if portfolio_impact < -0.20:  # More than 20% loss
+                                    st.error("❌ Severe portfolio vulnerability to this type of crisis")
+                                elif portfolio_impact < -0.10:  # More than 10% loss
+                                    st.warning("⚠️ Moderate portfolio vulnerability")
+                                else:
+                                    st.success("✅ Portfolio shows resilience to this crisis type")
+                            else:
+                                st.warning("Insufficient data for the selected crisis period.")
+                        
+                        except Exception as e:
+                            st.error(f"Historical stress test failed: {str(e)}")
+            
+            elif stress_type == 'Custom Shocks':
+                st.markdown("#### Custom Shock Scenarios")
+                
+                # Custom shock inputs
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    market_shock = st.slider(
+                        "Market Shock (%):",
+                        -50, 0, -20,
+                        key="market_shock",
+                        help="Apply uniform shock to all assets"
+                    )
+                
+                with col2:
+                    correlation_shock = st.slider(
+                        "Correlation Increase:",
+                        0.0, 1.0, 0.5,
+                        key="correlation_shock",
+                        help="Increase in asset correlations during stress"
+                    )
+                
+                # Individual asset shocks
+                st.markdown("**Individual Asset Shocks:**")
+                asset_shocks = {}
+                for asset in stress_assets:
+                    asset_shocks[asset] = st.slider(
+                        f"{asset} Shock (%):",
+                        -70, 30, market_shock,
+                        key=f"shock_{asset}"
+                    )
+                
+                if st.button("Run Custom Stress Test", key="run_custom_stress"):
+                    with st.spinner("Running custom stress test..."):
+                        try:
+                            # Calculate portfolio impact
+                            equal_weights = np.array([1/len(stress_assets)] * len(stress_assets))
+                            individual_impacts = np.array([asset_shocks[asset]/100 for asset in stress_assets])
+                            
+                            # Portfolio impact without correlation adjustment
+                            base_portfolio_impact = np.dot(equal_weights, individual_impacts)
+                            
+                            # Adjust for correlation increase (simplified)
+                            correlation_adjustment = correlation_shock * 0.1  # Approximate correlation impact
+                            adjusted_portfolio_impact = base_portfolio_impact * (1 + correlation_adjustment)
+                            
+                            portfolio_loss = stress_portfolio_value * adjusted_portfolio_impact
+                            
+                            st.markdown("#### Custom Stress Test Results")
+                            
+                            # Results table
+                            stress_results_df = pd.DataFrame({
+                                'Asset': stress_assets,
+                                'Applied Shock': [f"{asset_shocks[asset]:.1f}%" for asset in stress_assets],
+                                'Dollar Impact': [f"${stress_portfolio_value * w * (asset_shocks[asset]/100):,.0f}" 
+                                                for w, asset in zip(equal_weights, stress_assets)]
+                            })
+                            
+                            st.dataframe(stress_results_df, hide_index=True)
+                            
+                            # Portfolio summary
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Base Portfolio Impact", f"{base_portfolio_impact:.2%}")
+                            with col2:
+                                st.metric("Correlation-Adjusted Impact", f"{adjusted_portfolio_impact:.2%}")
+                            with col3:
+                                st.metric("Total Dollar Loss", f"${portfolio_loss:,.0f}")
+                            
+                            # Stress test visualization
+                            fig_custom_stress = go.Figure()
+                            
+                            fig_custom_stress.add_trace(go.Bar(
+                                x=stress_assets,
+                                y=[asset_shocks[asset] for asset in stress_assets],
+                                text=[f"{asset_shocks[asset]:.1f}%" for asset in stress_assets],
+                                textposition='auto',
+                                marker_color=['red' if shock < 0 else 'green' for shock in [asset_shocks[asset] for asset in stress_assets]]
+                            ))
+                            
+                            fig_custom_stress.update_layout(
+                                title="Applied Stress Shocks by Asset",
+                                xaxis_title="Asset",
+                                yaxis_title="Shock (%)",
+                                height=400
+                            )
+                            
+                            st.plotly_chart(fig_custom_stress, width='stretch')
+                        
+                        except Exception as e:
+                            st.error(f"Custom stress test failed: {str(e)}")
+            
+            else:  # Correlation Breakdown
+                st.markdown("#### Correlation Breakdown Analysis")
+                st.markdown("Analyze what happens when asset correlations break down during market stress.")
+                
+                if len(stress_assets) >= 2:
+                    if st.button("Analyze Correlation Breakdown", key="run_correlation_breakdown"):
+                        with st.spinner("Analyzing correlation breakdown scenarios..."):
+                            try:
+                                # Get recent data
+                                corr_data = {}
+                                for asset in stress_assets:
+                                    asset_prices = get_ticker_data(data, asset, 'close')
+                                    corr_data[asset] = asset_prices.tail(252)  # 1 year
+                                
+                                corr_df = pd.DataFrame(corr_data).dropna()
+                                returns_df = corr_df.pct_change().dropna()
+                                
+                                # Normal correlation matrix
+                                normal_corr = returns_df.corr()
+                                
+                                # Stress correlation scenarios
+                                scenarios = {
+                                    'Normal Market': normal_corr,
+                                    'Moderate Stress (Corr +20%)': normal_corr * 1.2,
+                                    'High Stress (Corr +50%)': normal_corr * 1.5,
+                                    'Crisis (All Corr = 0.9)': pd.DataFrame(0.9, index=normal_corr.index, columns=normal_corr.columns)
+                                }
+                                
+                                # Set diagonal to 1 for all scenarios
+                                for scenario_name, corr_matrix in scenarios.items():
+                                    np.fill_diagonal(corr_matrix.values, 1.0)
+                                    # Clip correlations to [-1, 1]
+                                    scenarios[scenario_name] = corr_matrix.clip(-1, 1)
+                                
+                                # Calculate portfolio variance under different scenarios
+                                equal_weights = np.array([1/len(stress_assets)] * len(stress_assets))
+                                asset_vols = returns_df.std().values * np.sqrt(252)  # Annualized volatilities
+                                
+                                scenario_results = {}
+                                for scenario_name, corr_matrix in scenarios.items():
+                                    # Portfolio variance = w'Σw where Σ is covariance matrix
+                                    cov_matrix = np.outer(asset_vols, asset_vols) * corr_matrix.values
+                                    portfolio_variance = np.dot(equal_weights, np.dot(cov_matrix, equal_weights))
+                                    portfolio_vol = np.sqrt(portfolio_variance)
+                                    
+                                    scenario_results[scenario_name] = {
+                                        'Portfolio Volatility': portfolio_vol,
+                                        'Average Correlation': (corr_matrix.values.sum() - len(stress_assets)) / (len(stress_assets) * (len(stress_assets) - 1))
+                                    }
+                                
+                                # Display results
+                                st.markdown("#### Correlation Breakdown Results")
+                                
+                                scenario_df = pd.DataFrame(scenario_results).T
+                                scenario_display = pd.DataFrame({
+                                    'Scenario': scenario_df.index,
+                                    'Avg Correlation': [f"{r:.3f}" for r in scenario_df['Average Correlation']],
+                                    'Portfolio Volatility': [f"{r:.2%}" for r in scenario_df['Portfolio Volatility']],
+                                    'Vol Increase': [f"{((r / scenario_df.iloc[0]['Portfolio Volatility']) - 1):.1%}" 
+                                                   for r in scenario_df['Portfolio Volatility']]
+                                })
+                                
+                                st.dataframe(scenario_display, hide_index=True)
+                                
+                                # Correlation heatmaps
+                                st.markdown("#### Correlation Matrix Comparison")
+                                
+                                fig_corr = make_subplots(
+                                    rows=2, cols=2,
+                                    subplot_titles=list(scenarios.keys()),
+                                    specs=[[{"type": "heatmap"}, {"type": "heatmap"}],
+                                           [{"type": "heatmap"}, {"type": "heatmap"}]]
+                                )
+                                
+                                positions = [(1, 1), (1, 2), (2, 1), (2, 2)]
+                                for i, (scenario_name, corr_matrix) in enumerate(scenarios.items()):
+                                    row, col = positions[i]
+                                    
+                                    fig_corr.add_trace(
+                                        go.Heatmap(
+                                            z=corr_matrix.values,
+                                            x=corr_matrix.columns,
+                                            y=corr_matrix.index,
+                                            colorscale='RdBu',
+                                            zmid=0,
+                                            showscale=(i == 0)
+                                        ),
+                                        row=row, col=col
+                                    )
+                                
+                                fig_corr.update_layout(height=600, title_text="Correlation Matrix Under Different Stress Scenarios")
+                                st.plotly_chart(fig_corr, width='stretch')
+                                
+                                # Risk assessment
+                                vol_increase = (scenario_df.iloc[-1]['Portfolio Volatility'] / scenario_df.iloc[0]['Portfolio Volatility'] - 1) * 100
+                                
+                                if vol_increase > 50:
+                                    st.error(f"❌ High correlation breakdown risk: {vol_increase:.1f}% volatility increase in crisis")
+                                elif vol_increase > 25:
+                                    st.warning(f"⚠️ Moderate correlation breakdown risk: {vol_increase:.1f}% volatility increase")
+                                else:
+                                    st.success(f"✅ Low correlation breakdown risk: {vol_increase:.1f}% volatility increase")
+                            
+                            except Exception as e:
+                                st.error(f"Correlation breakdown analysis failed: {str(e)}")
+                else:
+                    st.info("Please select at least 2 assets for correlation breakdown analysis.")
+        else:
+            st.info("Please select at least 1 asset for stress testing.")
+    
+    with tab4:
+        st.markdown("### Scenario Analysis")
+        st.markdown("Analyze portfolio performance under different economic scenarios.")
+        
+        # Economic scenario configuration
+        scenario_assets = st.multiselect(
+            "Select Assets for Scenario Analysis:",
+            summary['tickers'],
+            default=summary['tickers'][:4],
+            key="scenario_assets"
+        )
+        
+        if len(scenario_assets) >= 1:
+            # Predefined economic scenarios
+            economic_scenarios = {
+                'Economic Expansion': {
+                    'description': 'Strong GDP growth, low unemployment, rising interest rates',
+                    'equity_impact': 0.15,
+                    'bond_impact': -0.05,
+                    'commodity_impact': 0.10,
+                    'currency_impact': 0.05
+                },
+                'Economic Recession': {
+                    'description': 'Negative GDP growth, high unemployment, falling interest rates',
+                    'equity_impact': -0.25,
+                    'bond_impact': 0.08,
+                    'commodity_impact': -0.15,
+                    'currency_impact': -0.10
+                },
+                'High Inflation': {
+                    'description': 'Rising prices, potential stagflation, aggressive monetary policy',
+                    'equity_impact': -0.10,
+                    'bond_impact': -0.12,
+                    'commodity_impact': 0.20,
+                    'currency_impact': -0.08
+                },
+                'Deflation': {
+                    'description': 'Falling prices, economic stagnation, zero interest rates',
+                    'equity_impact': -0.20,
+                    'bond_impact': 0.15,
+                    'commodity_impact': -0.25,
+                    'currency_impact': 0.05
+                },
+                'Geopolitical Crisis': {
+                    'description': 'International tensions, trade disruptions, flight to safety',
+                    'equity_impact': -0.18,
+                    'bond_impact': 0.06,
+                    'commodity_impact': 0.15,
+                    'currency_impact': -0.12
+                }
+            }
+            
+            selected_scenarios = st.multiselect(
+                "Select Economic Scenarios:",
+                list(economic_scenarios.keys()),
+                default=list(economic_scenarios.keys())[:3],
+                key="selected_scenarios"
+            )
+            
+            # Asset classification for scenario impacts
+            st.markdown("#### Asset Classification")
+            st.markdown("Classify your assets to apply appropriate scenario impacts:")
+            
+            asset_types = {}
+            for asset in scenario_assets:
+                asset_types[asset] = st.selectbox(
+                    f"{asset} Asset Type:",
+                    ['Equity', 'Bond', 'Commodity', 'Currency'],
+                    key=f"type_{asset}"
+                )
+            
+            if st.button("Run Scenario Analysis", key="run_scenario_analysis"):
+                with st.spinner("Running scenario analysis..."):
+                    try:
+                        # Calculate current portfolio value and weights
+                        equal_weights = np.array([1/len(scenario_assets)] * len(scenario_assets))
+                        base_portfolio_value = 1000000  # $1M base portfolio
+                        
+                        scenario_results = {}
+                        
+                        for scenario_name in selected_scenarios:
+                            scenario = economic_scenarios[scenario_name]
+                            
+                            # Apply impacts based on asset classification
+                            asset_impacts = {}
+                            for asset in scenario_assets:
+                                asset_type = asset_types[asset].lower()
+                                if asset_type == 'equity':
+                                    impact = scenario['equity_impact']
+                                elif asset_type == 'bond':
+                                    impact = scenario['bond_impact']
+                                elif asset_type == 'commodity':
+                                    impact = scenario['commodity_impact']
+                                else:  # currency
+                                    impact = scenario['currency_impact']
+                                
+                                asset_impacts[asset] = impact
+                            
+                            # Calculate portfolio impact
+                            portfolio_impact = np.dot(equal_weights, list(asset_impacts.values()))
+                            portfolio_value_change = base_portfolio_value * portfolio_impact
+                            new_portfolio_value = base_portfolio_value + portfolio_value_change
+                            
+                            scenario_results[scenario_name] = {
+                                'description': scenario['description'],
+                                'portfolio_impact': portfolio_impact,
+                                'value_change': portfolio_value_change,
+                                'new_value': new_portfolio_value,
+                                'asset_impacts': asset_impacts
+                            }
+                        
+                        # Display scenario results
+                        st.markdown("#### Scenario Analysis Results")
+                        
+                        scenario_summary = pd.DataFrame({
+                            'Scenario': list(scenario_results.keys()),
+                            'Portfolio Impact': [f"{r['portfolio_impact']:.2%}" for r in scenario_results.values()],
+                            'Value Change': [f"${r['value_change']:,.0f}" for r in scenario_results.values()],
+                            'New Portfolio Value': [f"${r['new_value']:,.0f}" for r in scenario_results.values()]
+                        })
+                        
+                        st.dataframe(scenario_summary, hide_index=True)
+                        
+                        # Detailed scenario breakdown
+                        st.markdown("#### Detailed Impact by Asset")
+                        
+                        for scenario_name, results in scenario_results.items():
+                            with st.expander(f"{scenario_name} - {results['description']}"):
+                                asset_detail = pd.DataFrame({
+                                    'Asset': scenario_assets,
+                                    'Asset Type': [asset_types[asset] for asset in scenario_assets],
+                                    'Impact': [f"{results['asset_impacts'][asset]:.2%}" for asset in scenario_assets],
+                                    'Dollar Impact': [f"${base_portfolio_value * w * results['asset_impacts'][asset]:,.0f}" 
+                                                    for w, asset in zip(equal_weights, scenario_assets)]
+                                })
+                                
+                                st.dataframe(asset_detail, hide_index=True)
+                        
+                        # Scenario comparison chart
+                        st.markdown("#### Scenario Impact Comparison")
+                        
+                        fig_scenario = go.Figure()
+                        
+                        scenario_names = list(scenario_results.keys())
+                        portfolio_impacts = [scenario_results[s]['portfolio_impact'] * 100 for s in scenario_names]
+                        
+                        colors = ['green' if impact > 0 else 'red' for impact in portfolio_impacts]
+                        
+                        fig_scenario.add_trace(go.Bar(
+                            x=scenario_names,
+                            y=portfolio_impacts,
+                            text=[f"{impact:.1f}%" for impact in portfolio_impacts],
+                            textposition='auto',
+                            marker_color=colors
+                        ))
+                        
+                        fig_scenario.update_layout(
+                            title="Portfolio Impact by Economic Scenario",
+                            xaxis_title="Economic Scenario",
+                            yaxis_title="Portfolio Impact (%)",
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_scenario, width='stretch')
+                        
+                        # Risk assessment
+                        worst_scenario = min(scenario_results.values(), key=lambda x: x['portfolio_impact'])
+                        best_scenario = max(scenario_results.values(), key=lambda x: x['portfolio_impact'])
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("**Best Case Scenario:**")
+                            best_name = [k for k, v in scenario_results.items() if v == best_scenario][0]
+                            st.success(f"{best_name}: +{best_scenario['portfolio_impact']:.2%}")
+                        
+                        with col2:
+                            st.markdown("**Worst Case Scenario:**")
+                            worst_name = [k for k, v in scenario_results.items() if v == worst_scenario][0]
+                            st.error(f"{worst_name}: {worst_scenario['portfolio_impact']:.2%}")
+                        
+                        # Scenario risk score
+                        scenario_range = best_scenario['portfolio_impact'] - worst_scenario['portfolio_impact']
+                        if scenario_range > 0.4:  # More than 40% range
+                            st.warning("⚠️ High scenario sensitivity - Consider diversification")
+                        else:
+                            st.info("ℹ️ Moderate scenario sensitivity - Reasonable diversification")
+                    
+                    except Exception as e:
+                        st.error(f"Scenario analysis failed: {str(e)}")
+        else:
+            st.info("Please select at least 1 asset for scenario analysis.")
+    
+    with tab5:
+        st.markdown("### Risk Controls and Limits")
+        st.markdown("Set up risk monitoring and control mechanisms for portfolio management.")
+        
+        # Risk control configuration
+        control_assets = st.multiselect(
+            "Select Assets for Risk Controls:",
+            summary['tickers'],
+            default=summary['tickers'][:3],
+            key="control_assets"
+        )
+        
+        if len(control_assets) >= 1:
+            st.markdown("#### Position Limits")
+            
+            # Position size limits
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                max_single_position = st.slider(
+                    "Maximum Single Position (%):",
+                    5, 50, 25,
+                    key="max_single_position",
+                    help="Maximum allocation to any single asset"
+                )
+                
+                max_sector_exposure = st.slider(
+                    "Maximum Sector Exposure (%):",
+                    10, 80, 40,
+                    key="max_sector_exposure",
+                    help="Maximum allocation to any single sector"
+                )
+            
+            with col2:
+                concentration_limit = st.slider(
+                    "Concentration Limit - Top 3 Holdings (%):",
+                    30, 90, 60,
+                    key="concentration_limit",
+                    help="Maximum combined weight of top 3 holdings"
+                )
+                
+                min_diversification = st.slider(
+                    "Minimum Number of Holdings:",
+                    3, 20, 8,
+                    key="min_diversification",
+                    help="Minimum number of different holdings"
+                )
+            
+            st.markdown("#### Risk Limits")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                max_portfolio_var = st.slider(
+                    "Maximum Portfolio VaR (95%, 1-day) (%):",
+                    1.0, 10.0, 3.0,
+                    step=0.5,
+                    key="max_portfolio_var",
+                    help="Maximum daily Value at Risk"
+                )
+                
+                max_drawdown_limit = st.slider(
+                    "Maximum Drawdown Alert (%):",
+                    5, 30, 15,
+                    key="max_drawdown_limit",
+                    help="Alert threshold for maximum drawdown"
+                )
+            
+            with col2:
+                max_correlation = st.slider(
+                    "Maximum Average Correlation:",
+                    0.3, 0.9, 0.7,
+                    step=0.05,
+                    key="max_correlation",
+                    help="Alert when average correlation exceeds this level"
+                )
+                
+                min_liquidity = st.selectbox(
+                    "Minimum Liquidity Requirement:",
+                    ['Daily', 'Weekly', 'Monthly'],
+                    index=1,
+                    key="min_liquidity",
+                    help="Minimum liquidity for portfolio holdings"
+                )
+            
+            if st.button("Check Risk Controls", key="check_risk_controls"):
+                with st.spinner("Checking portfolio against risk controls..."):
+                    try:
+                        # Get current portfolio data
+                        control_data = {}
+                        for asset in control_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            control_data[asset] = asset_prices.tail(252)
+                        
+                        control_df = pd.DataFrame(control_data).dropna()
+                        returns_df = control_df.pct_change().dropna()
+                        
+                        # Current portfolio (equal weights for example)
+                        equal_weights = np.array([1/len(control_assets)] * len(control_assets))
+                        portfolio_weights = dict(zip(control_assets, equal_weights))
+                        
+                        # Check position limits
+                        violations = []
+                        warnings = []
+                        
+                        # 1. Single position limit
+                        max_weight = max(equal_weights)
+                        if max_weight > max_single_position / 100:
+                            violations.append(f"Single position limit exceeded: {max_weight:.1%} > {max_single_position}%")
+                        
+                        # 2. Concentration limit (top 3)
+                        sorted_weights = sorted(equal_weights, reverse=True)
+                        top_3_concentration = sum(sorted_weights[:3])
+                        if top_3_concentration > concentration_limit / 100:
+                            violations.append(f"Concentration limit exceeded: {top_3_concentration:.1%} > {concentration_limit}%")
+                        
+                        # 3. Minimum diversification
+                        if len(control_assets) < min_diversification:
+                            violations.append(f"Insufficient diversification: {len(control_assets)} holdings < {min_diversification} minimum")
+                        
+                        # 4. Portfolio VaR
+                        portfolio_returns = (returns_df * equal_weights).sum(axis=1)
+                        portfolio_var_95 = abs(np.percentile(portfolio_returns, 5))
+                        if portfolio_var_95 > max_portfolio_var / 100:
+                            violations.append(f"Portfolio VaR exceeded: {portfolio_var_95:.2%} > {max_portfolio_var}%")
+                        
+                        # 5. Maximum drawdown check
+                        cumulative = (1 + portfolio_returns).cumprod()
+                        running_max = cumulative.cummax()
+                        current_drawdown = ((cumulative.iloc[-1] - running_max.iloc[-1]) / running_max.iloc[-1])
+                        if abs(current_drawdown) > max_drawdown_limit / 100:
+                            violations.append(f"Drawdown alert: {current_drawdown:.2%} > {max_drawdown_limit}% threshold")
+                        
+                        # 6. Correlation check
+                        correlation_matrix = returns_df.corr()
+                        avg_correlation = (correlation_matrix.values.sum() - len(control_assets)) / (len(control_assets) * (len(control_assets) - 1))
+                        if avg_correlation > max_correlation:
+                            warnings.append(f"High correlation warning: {avg_correlation:.3f} > {max_correlation} threshold")
+                        
+                        # Display results
+                        st.markdown("#### Risk Control Results")
+                        
+                        if violations:
+                            st.error("❌ **Risk Control Violations:**")
+                            for violation in violations:
+                                st.error(f"• {violation}")
+                        else:
+                            st.success("✅ **All Risk Controls Passed**")
+                        
+                        if warnings:
+                            st.warning("⚠️ **Risk Warnings:**")
+                            for warning in warnings:
+                                st.warning(f"• {warning}")
+                        
+                        # Risk dashboard
+                        st.markdown("#### Risk Dashboard")
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric(
+                                "Largest Position", 
+                                f"{max_weight:.1%}",
+                                delta=f"Limit: {max_single_position}%"
+                            )
+                        
+                        with col2:
+                            st.metric(
+                                "Top 3 Concentration", 
+                                f"{top_3_concentration:.1%}",
+                                delta=f"Limit: {concentration_limit}%"
+                            )
+                        
+                        with col3:
+                            st.metric(
+                                "Portfolio VaR (95%)", 
+                                f"{portfolio_var_95:.2%}",
+                                delta=f"Limit: {max_portfolio_var}%"
+                            )
+                        
+                        with col4:
+                            st.metric(
+                                "Avg Correlation", 
+                                f"{avg_correlation:.3f}",
+                                delta=f"Alert: {max_correlation}"
+                            )
+                        
+                        # Portfolio composition pie chart
+                        st.markdown("#### Current Portfolio Composition")
+                        
+                        fig_composition = px.pie(
+                            values=equal_weights,
+                            names=control_assets,
+                            title="Portfolio Allocation"
+                        )
+                        
+                        st.plotly_chart(fig_composition, width='stretch')
+                        
+                        # Risk control recommendations
+                        st.markdown("#### Risk Management Recommendations")
+                        
+                        if len(violations) > 0:
+                            st.markdown("**Immediate Actions Required:**")
+                            if max_weight > max_single_position / 100:
+                                st.write("• Reduce position size in largest holding")
+                            if top_3_concentration > concentration_limit / 100:
+                                st.write("• Diversify away from top holdings")
+                            if portfolio_var_95 > max_portfolio_var / 100:
+                                st.write("• Reduce portfolio risk through diversification or hedging")
+                        else:
+                            st.markdown("**Maintenance Recommendations:**")
+                            st.write("• Continue regular monitoring of risk metrics")
+                            st.write("• Review and update risk limits quarterly")
+                            st.write("• Monitor market conditions for changing correlations")
+                    
+                    except Exception as e:
+                        st.error(f"Risk control check failed: {str(e)}")
+        else:
+            st.info("Please select at least 1 asset for risk control monitoring.")
+    
+    # Educational content
+    st.markdown("---")
+    st.markdown("### 📚 Risk Management Best Practices")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        **Risk Measurement:**
+        - **VaR:** Maximum expected loss at given confidence
+        - **Expected Shortfall:** Average loss beyond VaR
+        - **Stress Testing:** Performance under extreme scenarios
+        - **Correlation Analysis:** Diversification effectiveness
+        """)
+    
+    with col2:
+        st.markdown("""
+        **Risk Controls:**
+        - **Position Limits:** Prevent over-concentration
+        - **Stop Losses:** Limit downside exposure
+        - **Diversification Requirements:** Spread risk
+        - **Regular Monitoring:** Early warning systems
+        """)
+    
+    st.info("""
+    💡 **Key Principle:** Risk management is about preserving capital and ensuring sustainable returns. 
+    The goal is not to eliminate risk but to understand, measure, and control it effectively.
+    """)
     
     st.markdown("""
     ## 📖 How to Use This Application
@@ -4230,6 +5443,8 @@ def main():
         page_portfolio_optimization()
     elif current_page == "backtest":
         page_backtesting()
+    elif current_page == "risk":
+        page_risk_management()
     elif current_page == "help":
         page_help()
     
