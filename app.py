@@ -273,35 +273,287 @@ def page_data_exploration():
     data = st.session_state.data
     summary = get_data_summary(data)
     
-    # Ticker selection
-    st.markdown("### Select Ticker for Analysis")
-    selected_ticker = st.selectbox("Choose a ticker:", summary['tickers'])
+    # Create tabs for different types of analysis
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Single Ticker", "📈 Multi-Ticker", "🔍 Technical Analysis", "📋 Data Summary"])
     
-    # Column selection
-    columns = ['open', 'high', 'low', 'close', 'volume']
-    selected_column = st.selectbox("Choose a column:", columns, index=3)  # Default to 'close'
+    with tab1:
+        st.markdown("### Single Ticker Analysis")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_ticker = st.selectbox("Choose a ticker:", summary['tickers'], key="single_ticker")
+        with col2:
+            selected_column = st.selectbox("Choose a column:", ['open', 'high', 'low', 'close', 'volume'], 
+                                         index=3, key="single_column")  # Default to 'close'
+        
+        # Get ticker data
+        ticker_data = get_ticker_data(data, selected_ticker, selected_column)
+        
+        # Display basic statistics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Mean", f"${ticker_data.mean():.2f}")
+        with col2:
+            st.metric("Std Dev", f"${ticker_data.std():.2f}")
+        with col3:
+            st.metric("Min", f"${ticker_data.min():.2f}")
+        with col4:
+            st.metric("Max", f"${ticker_data.max():.2f}")
+        
+        # Interactive plot
+        fig = create_time_series_plot(ticker_data, f"{selected_ticker} - {selected_column.title()}")
+        st.plotly_chart(fig, width='stretch')
+        
+        # Additional analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Recent Performance")
+            recent_data = ticker_data.tail(30)
+            pct_change = ((recent_data.iloc[-1] - recent_data.iloc[0]) / recent_data.iloc[0]) * 100
+            st.metric("30-Day Change", f"{pct_change:.2f}%", 
+                     delta=f"{ticker_data.iloc[-1] - ticker_data.iloc[-2]:.2f}")
+        
+        with col2:
+            st.markdown("#### Volatility Analysis")
+            returns = ticker_data.pct_change().dropna()
+            volatility = returns.std() * np.sqrt(252)  # Annualized volatility
+            st.metric("Annualized Volatility", f"{volatility:.2%}")
+            sharpe_ratio = returns.mean() / returns.std() * np.sqrt(252) if returns.std() > 0 else 0
+            st.metric("Sharpe Ratio (approx)", f"{sharpe_ratio:.2f}")
+        
+        # Historical statistics
+        if st.checkbox("Show historical statistics", key="hist_stats"):
+            st.markdown("#### Historical Statistics")
+            stats_df = pd.DataFrame({
+                'Statistic': ['Count', 'Mean', 'Std', 'Min', '25%', '50%', '75%', 'Max'],
+                'Value': [
+                    len(ticker_data),
+                    ticker_data.mean(),
+                    ticker_data.std(),
+                    ticker_data.min(),
+                    ticker_data.quantile(0.25),
+                    ticker_data.median(),
+                    ticker_data.quantile(0.75),
+                    ticker_data.max()
+                ]
+            })
+            st.dataframe(stats_df, hide_index=True)
     
-    # Get ticker data
-    ticker_data = get_ticker_data(data, selected_ticker, selected_column)
+    with tab2:
+        st.markdown("### Multi-Ticker Comparison")
+        
+        # Ticker selection for comparison
+        selected_tickers = st.multiselect(
+            "Select tickers to compare:", 
+            summary['tickers'], 
+            default=summary['tickers'][:3],  # Default to first 3
+            key="multi_tickers"
+        )
+        
+        if selected_tickers:
+            selected_column_multi = st.selectbox("Choose a column:", ['open', 'high', 'low', 'close', 'volume'], 
+                                                index=3, key="multi_column")
+            
+            # Get multi-ticker data
+            multi_data = get_multiple_tickers_data(data, selected_tickers, selected_column_multi)
+            
+            if not multi_data.empty:
+                # Normalized comparison (base 100)
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### Absolute Prices")
+                    fig_abs = create_time_series_plot(multi_data, f"Multi-Ticker {selected_column_multi.title()} Comparison")
+                    st.plotly_chart(fig_abs, width='stretch')
+                
+                with col2:
+                    st.markdown("#### Normalized Comparison (Base 100)")
+                    normalized_data = multi_data.div(multi_data.iloc[0]) * 100
+                    fig_norm = create_time_series_plot(normalized_data, "Normalized Performance (Base 100)")
+                    st.plotly_chart(fig_norm, width='stretch')
+                
+                # Correlation matrix
+                st.markdown("#### Correlation Matrix")
+                corr_matrix = multi_data.pct_change().corr()
+                
+                fig_corr = px.imshow(
+                    corr_matrix,
+                    title="Correlation Matrix of Returns",
+                    color_continuous_scale="RdBu_r",
+                    aspect="auto"
+                )
+                st.plotly_chart(fig_corr, width='stretch')
+                
+                # Performance summary
+                st.markdown("#### Performance Summary")
+                performance_data = []
+                for ticker in selected_tickers:
+                    ticker_series = multi_data[ticker]
+                    total_return = ((ticker_series.iloc[-1] - ticker_series.iloc[0]) / ticker_series.iloc[0]) * 100
+                    volatility = ticker_series.pct_change().std() * np.sqrt(252) * 100
+                    
+                    performance_data.append({
+                        'Ticker': ticker,
+                        'Total Return (%)': f"{total_return:.2f}",
+                        'Volatility (%)': f"{volatility:.2f}",
+                        'Current Price': f"${ticker_series.iloc[-1]:.2f}",
+                        'Max Price': f"${ticker_series.max():.2f}",
+                        'Min Price': f"${ticker_series.min():.2f}"
+                    })
+                
+                performance_df = pd.DataFrame(performance_data)
+                st.dataframe(performance_df, hide_index=True)
+            else:
+                st.error("No data available for selected tickers.")
+        else:
+            st.info("Please select at least one ticker for comparison.")
     
-    # Display basic statistics
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Mean", f"${ticker_data.mean():.2f}")
-    with col2:
-        st.metric("Std Dev", f"${ticker_data.std():.2f}")
-    with col3:
-        st.metric("Min", f"${ticker_data.min():.2f}")
-    with col4:
-        st.metric("Max", f"${ticker_data.max():.2f}")
+    with tab3:
+        st.markdown("### Technical Analysis")
+        
+        selected_ticker_tech = st.selectbox("Choose a ticker for technical analysis:", 
+                                          summary['tickers'], key="tech_ticker")
+        
+        # Get OHLC data for technical analysis
+        ohlc_data = {}
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            ohlc_data[col] = get_ticker_data(data, selected_ticker_tech, col)
+        
+        ohlc_df = pd.DataFrame(ohlc_data)
+        
+        # Moving averages
+        ma_windows = st.multiselect("Select moving average windows:", [5, 10, 20, 50], 
+                                   default=[10, 20], key="ma_windows")
+        
+        # Create technical analysis plot
+        fig_tech = go.Figure()
+        
+        # Add candlestick chart
+        fig_tech.add_trace(go.Candlestick(
+            x=ohlc_df.index,
+            open=ohlc_df['open'],
+            high=ohlc_df['high'],
+            low=ohlc_df['low'],
+            close=ohlc_df['close'],
+            name='Price'
+        ))
+        
+        # Add moving averages
+        colors = ['blue', 'red', 'green', 'orange']
+        for i, window in enumerate(ma_windows):
+            ma = ohlc_df['close'].rolling(window=window).mean()
+            fig_tech.add_trace(go.Scatter(
+                x=ma.index,
+                y=ma.values,
+                mode='lines',
+                name=f'MA{window}',
+                line=dict(color=colors[i % len(colors)])
+            ))
+        
+        fig_tech.update_layout(
+            title=f"{selected_ticker_tech} - Technical Analysis",
+            xaxis_title="Date",
+            yaxis_title="Price ($)",
+            height=600
+        )
+        
+        st.plotly_chart(fig_tech, width='stretch')
+        
+        # Technical indicators summary
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("#### Price Levels")
+            current_price = ohlc_df['close'].iloc[-1]
+            high_52w = ohlc_df['high'].tail(252).max() if len(ohlc_df) >= 252 else ohlc_df['high'].max()
+            low_52w = ohlc_df['low'].tail(252).min() if len(ohlc_df) >= 252 else ohlc_df['low'].min()
+            
+            st.metric("Current Price", f"${current_price:.2f}")
+            st.metric("52W High", f"${high_52w:.2f}")
+            st.metric("52W Low", f"${low_52w:.2f}")
+        
+        with col2:
+            st.markdown("#### Volume Analysis")
+            avg_volume = ohlc_df['volume'].mean()
+            recent_volume = ohlc_df['volume'].tail(5).mean()
+            volume_ratio = recent_volume / avg_volume if avg_volume > 0 else 1
+            
+            st.metric("Avg Volume", f"{avg_volume:,.0f}")
+            st.metric("Recent Volume", f"{recent_volume:,.0f}")
+            st.metric("Volume Ratio", f"{volume_ratio:.2f}x")
+        
+        with col3:
+            st.markdown("#### Trend Analysis")
+            returns_5d = ((current_price - ohlc_df['close'].iloc[-6]) / ohlc_df['close'].iloc[-6]) * 100 if len(ohlc_df) > 5 else 0
+            returns_20d = ((current_price - ohlc_df['close'].iloc[-21]) / ohlc_df['close'].iloc[-21]) * 100 if len(ohlc_df) > 20 else 0
+            
+            st.metric("5-Day Return", f"{returns_5d:.2f}%")
+            st.metric("20-Day Return", f"{returns_20d:.2f}%")
+            
+            # Simple trend indicator
+            if ma_windows and len(ma_windows) >= 2:
+                ma_short = ohlc_df['close'].rolling(window=min(ma_windows)).mean().iloc[-1]
+                ma_long = ohlc_df['close'].rolling(window=max(ma_windows)).mean().iloc[-1]
+                trend = "Bullish" if ma_short > ma_long else "Bearish"
+                st.metric("Trend", trend)
     
-    # Interactive plot
-    fig = create_time_series_plot(ticker_data, f"{selected_ticker} - {selected_column.title()}")
-    st.plotly_chart(fig, width='stretch')
-    
-    # Data table
-    if st.checkbox("Show raw data"):
-        st.dataframe(ticker_data.tail(50))
+    with tab4:
+        st.markdown("### Data Summary")
+        
+        # Overall dataset summary
+        st.markdown("#### Dataset Overview")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Tickers", len(summary['tickers']))
+        with col2:
+            st.metric("Total Records", summary['total_records'])
+        with col3:
+            st.metric("Date Range", f"{summary['num_days']} days")
+        with col4:
+            st.metric("Columns", len(summary['columns']))
+        
+        # Ticker-by-ticker summary
+        st.markdown("#### Ticker Summary")
+        ticker_summary_data = []
+        
+        for ticker in summary['tickers']:
+            ticker_close = get_ticker_data(data, ticker, 'close')
+            ticker_volume = get_ticker_data(data, ticker, 'volume')
+            
+            total_return = ((ticker_close.iloc[-1] - ticker_close.iloc[0]) / ticker_close.iloc[0]) * 100
+            volatility = ticker_close.pct_change().std() * np.sqrt(252) * 100
+            avg_volume = ticker_volume.mean()
+            
+            ticker_summary_data.append({
+                'Ticker': ticker,
+                'Start Price': f"${ticker_close.iloc[0]:.2f}",
+                'End Price': f"${ticker_close.iloc[-1]:.2f}",
+                'Total Return (%)': f"{total_return:.2f}",
+                'Volatility (%)': f"{volatility:.2f}",
+                'Avg Volume': f"{avg_volume:,.0f}",
+                'Data Points': len(ticker_close)
+            })
+        
+        ticker_summary_df = pd.DataFrame(ticker_summary_data)
+        st.dataframe(ticker_summary_df, hide_index=True)
+        
+        # Data quality check
+        st.markdown("#### Data Quality")
+        missing_data = data.isnull().sum().sum()
+        completeness = ((len(data) - missing_data) / len(data)) * 100
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Missing Values", missing_data)
+        with col2:
+            st.metric("Completeness", f"{completeness:.1f}%")
+        
+        # Raw data preview
+        if st.checkbox("Show raw data preview"):
+            st.markdown("#### Raw Data Preview (Last 20 records)")
+            st.dataframe(data.tail(20))
 
 
 def page_individual_forecasting():
