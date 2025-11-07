@@ -100,6 +100,38 @@ def split_train_test(data: pd.Series, test_size: float = 0.2) -> tuple:
     return train_data, test_data
 
 
+def get_multiple_tickers_data(data: pd.DataFrame, tickers: List[str], column: str = 'close') -> pd.DataFrame:
+    """
+    Get data for multiple tickers as a DataFrame with tickers as columns.
+    
+    Args:
+        data (pd.DataFrame): Multi-indexed DataFrame with stock data
+        tickers (List[str]): List of ticker symbols
+        column (str): Column to extract (default: 'close')
+        
+    Returns:
+        pd.DataFrame: DataFrame with dates as index and tickers as columns
+    """
+    result_data = {}
+    
+    for ticker in tickers:
+        ticker_data = get_ticker_data(data, ticker, column)
+        if not ticker_data.empty:
+            result_data[ticker] = ticker_data
+    
+    if not result_data:
+        print(f"Warning: No data found for any of the tickers: {tickers}")
+        return pd.DataFrame()
+    
+    # Combine into DataFrame
+    result_df = pd.DataFrame(result_data)
+    
+    # Fill any missing values forward then backward
+    result_df = result_df.fillna(method='ffill').fillna(method='bfill')
+    
+    return result_df
+
+
 def get_data_summary(data: pd.DataFrame) -> Dict:
     """
     Get summary statistics for the loaded data.
