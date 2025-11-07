@@ -27,6 +27,7 @@ try:
     from var_model import VARModel
     from deep_learning_model import create_deep_learning_forecaster
     from run_backtest import SimpleBacktester
+    from performance_reporting import PerformanceReporter
     from interactive_plotting import InteractivePlotter, quick_line_plot, create_dashboard_plot
     
     # Import scientific computing for optimization
@@ -189,6 +190,7 @@ def sidebar_navigation():
         "💼 Portfolio Optimization": "portfolio",
         "🎯 Backtesting": "backtest",
         "🛡️ Risk Management": "risk",
+        "📋 Performance Reports": "reports",
         "❓ Help": "help"
     }
     
@@ -5417,6 +5419,492 @@ def page_risk_management():
     """)
 
 
+def page_performance_reporting():
+    """Performance reporting page."""
+    st.markdown('<div class="main-header">Performance Reporting</div>', unsafe_allow_html=True)
+    
+    if 'data' not in st.session_state or st.session_state.data is None:
+        st.warning("Please load data first from the Home page.")
+        return
+    
+    data = st.session_state.data
+    summary = get_data_summary(data)
+    
+    st.markdown("""
+    Generate comprehensive performance reports including metrics, attribution analysis, 
+    and professional-grade visualizations for portfolio presentation and analysis.
+    """)
+    
+    # Initialize performance reporter
+    reporter = PerformanceReporter()
+    
+    # Create tabs for different reporting features
+    tab1, tab2, tab3 = st.tabs(["📈 Portfolio Report", "📊 Detailed Analytics", "📋 Executive Summary"])
+    
+    with tab1:
+        st.markdown("### Portfolio Performance Report")
+        st.markdown("Generate a comprehensive performance report for your portfolio strategy.")
+        
+        # Portfolio configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            report_assets = st.multiselect(
+                "Select Portfolio Assets:",
+                summary['tickers'],
+                default=summary['tickers'][:4],
+                key="report_assets"
+            )
+            
+            report_strategy = st.selectbox(
+                "Portfolio Strategy:",
+                ['Equal Weight', 'Risk Parity', 'Market Cap Weight'],
+                key="report_strategy"
+            )
+            
+            report_period = st.selectbox(
+                "Reporting Period:",
+                ['6 Months', '1 Year', '2 Years', '3 Years'],
+                index=1,
+                key="report_period"
+            )
+        
+        with col2:
+            benchmark_asset = st.selectbox(
+                "Benchmark Asset (Optional):",
+                ['None'] + summary['tickers'],
+                key="benchmark_asset"
+            )
+            
+            include_risk_metrics = st.checkbox(
+                "Include Advanced Risk Metrics",
+                value=True,
+                key="include_risk_metrics"
+            )
+        
+        if len(report_assets) >= 1:
+            if st.button("Generate Performance Report", type="primary", key="generate_report"):
+                with st.spinner("Generating comprehensive performance report..."):
+                    try:
+                        # Get data for reporting period
+                        period_map = {'6 Months': 180, '1 Year': 365, '2 Years': 730, '3 Years': 1095}
+                        days_back = period_map[report_period]
+                        start_date = datetime.now() - timedelta(days=days_back)
+                        
+                        # Get portfolio data
+                        portfolio_data = {}
+                        for asset in report_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            mask = asset_prices.index >= pd.Timestamp(start_date)
+                            portfolio_data[asset] = asset_prices[mask]
+                        
+                        portfolio_df = pd.DataFrame(portfolio_data).dropna()
+                        
+                        if len(portfolio_df) < 30:
+                            st.error("Insufficient data for the selected period. Please adjust the reporting period.")
+                            return
+                        
+                        portfolio_returns_df = portfolio_df.pct_change().dropna()
+                        
+                        # Calculate portfolio weights
+                        if report_strategy == 'Equal Weight':
+                            weights = np.array([1/len(report_assets)] * len(report_assets))
+                        elif report_strategy == 'Risk Parity':
+                            volatilities = portfolio_returns_df.std()
+                            inv_vol = 1 / volatilities
+                            weights = (inv_vol / inv_vol.sum()).values
+                        else:  # Market Cap Weight
+                            prices = portfolio_df.iloc[-1]
+                            weights = (prices / prices.sum()).values
+                        
+                        # Calculate portfolio returns
+                        portfolio_returns = (portfolio_returns_df * weights).sum(axis=1)
+                        
+                        # Get benchmark data if selected
+                        benchmark_returns = None
+                        if benchmark_asset != 'None':
+                            benchmark_prices = get_ticker_data(data, benchmark_asset, 'close')
+                            mask = benchmark_prices.index >= pd.Timestamp(start_date)
+                            benchmark_prices = benchmark_prices[mask]
+                            benchmark_returns = benchmark_prices.pct_change().dropna()
+                            
+                            # Align dates
+                            common_dates = portfolio_returns.index.intersection(benchmark_returns.index)
+                            portfolio_returns = portfolio_returns.loc[common_dates]
+                            benchmark_returns = benchmark_returns.loc[common_dates]
+                        
+                        # Calculate performance metrics
+                        metrics = reporter.calculate_performance_metrics(
+                            portfolio_returns, 
+                            benchmark_returns
+                        )
+                        
+                        # Display performance summary
+                        st.markdown("#### Performance Summary")
+                        
+                        # Key metrics display
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Total Return", f"{metrics['total_return']:.2%}")
+                        with col2:
+                            st.metric("Annualized Return", f"{metrics['annualized_return']:.2%}")
+                        with col3:
+                            st.metric("Volatility", f"{metrics['volatility']:.2%}")
+                        with col4:
+                            st.metric("Sharpe Ratio", f"{metrics['sharpe_ratio']:.3f}")
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Max Drawdown", f"{metrics['max_drawdown']:.2%}")
+                        with col2:
+                            st.metric("Win Rate", f"{metrics['win_rate']:.2%}")
+                        with col3:
+                            st.metric("VaR (95%)", f"{metrics['var_95']:.2%}")
+                        with col4:
+                            if 'alpha' in metrics:
+                                st.metric("Alpha", f"{metrics['alpha']:.2%}")
+                            else:
+                                st.metric("Sortino Ratio", f"{metrics['sortino_ratio']:.3f}")
+                        
+                        # Generate performance chart
+                        st.markdown("#### Portfolio Performance Analysis")
+                        
+                        performance_chart = reporter.generate_performance_summary_chart(
+                            portfolio_returns, 
+                            benchmark_returns,
+                            f"{report_strategy} Portfolio Performance ({report_period})"
+                        )
+                        
+                        if performance_chart:
+                            st.plotly_chart(performance_chart, width='stretch')
+                        
+                        # Portfolio composition
+                        st.markdown("#### Portfolio Composition")
+                        
+                        composition_df = pd.DataFrame({
+                            'Asset': report_assets,
+                            'Weight': weights,
+                            'Weight (%)': [f"{w:.1%}" for w in weights]
+                        }).sort_values('Weight', ascending=False)
+                        
+                        col1, col2 = st.columns([1, 2])
+                        
+                        with col1:
+                            st.dataframe(composition_df, hide_index=True)
+                        
+                        with col2:
+                            fig_pie = px.pie(
+                                composition_df,
+                                values='Weight',
+                                names='Asset',
+                                title="Portfolio Allocation"
+                            )
+                            st.plotly_chart(fig_pie, width='stretch')
+                        
+                        # Monthly performance table
+                        st.markdown("#### Monthly Performance Breakdown")
+                        
+                        monthly_table = reporter.generate_monthly_performance_table(portfolio_returns)
+                        if monthly_table is not None:
+                            st.dataframe(monthly_table, width='stretch')
+                        
+                        # Performance vs benchmark comparison
+                        if benchmark_returns is not None:
+                            st.markdown("#### Portfolio vs Benchmark Comparison")
+                            
+                            bench_metrics = reporter.calculate_performance_metrics(benchmark_returns)
+                            
+                            comparison_df = pd.DataFrame({
+                                'Metric': ['Total Return', 'Annualized Return', 'Volatility', 'Sharpe Ratio', 'Max Drawdown'],
+                                'Portfolio': [
+                                    f"{metrics['total_return']:.2%}",
+                                    f"{metrics['annualized_return']:.2%}",
+                                    f"{metrics['volatility']:.2%}",
+                                    f"{metrics['sharpe_ratio']:.3f}",
+                                    f"{metrics['max_drawdown']:.2%}"
+                                ],
+                                'Benchmark': [
+                                    f"{bench_metrics['total_return']:.2%}",
+                                    f"{bench_metrics['annualized_return']:.2%}",
+                                    f"{bench_metrics['volatility']:.2%}",
+                                    f"{bench_metrics['sharpe_ratio']:.3f}",
+                                    f"{bench_metrics['max_drawdown']:.2%}"
+                                ]
+                            })
+                            
+                            st.dataframe(comparison_df, hide_index=True)
+                            
+                            if 'alpha' in metrics and metrics['alpha'] > 0:
+                                st.success(f"🎯 Portfolio generated {metrics['alpha']:.2%} alpha vs benchmark")
+                            elif 'alpha' in metrics:
+                                st.info(f"📊 Portfolio underperformed benchmark by {abs(metrics['alpha']):.2%}")
+                    
+                    except Exception as e:
+                        st.error(f"Performance report generation failed: {str(e)}")
+        else:
+            st.info("Please select at least 1 asset for performance reporting.")
+    
+    with tab2:
+        st.markdown("### Detailed Performance Analytics")
+        st.markdown("Deep dive into risk-return characteristics and statistical analysis.")
+        
+        # Analytics configuration
+        analytics_assets = st.multiselect(
+            "Select Assets for Analytics:",
+            summary['tickers'],
+            default=summary['tickers'][:3],
+            key="analytics_assets"
+        )
+        
+        if len(analytics_assets) >= 1:
+            if st.button("Generate Detailed Analytics", key="generate_analytics"):
+                with st.spinner("Generating detailed analytics..."):
+                    try:
+                        # Get data (last 2 years for comprehensive analysis)
+                        start_date = datetime.now() - timedelta(days=730)
+                        
+                        analytics_data = {}
+                        for asset in analytics_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            mask = asset_prices.index >= pd.Timestamp(start_date)
+                            analytics_data[asset] = asset_prices[mask]
+                        
+                        analytics_df = pd.DataFrame(analytics_data).dropna()
+                        analytics_returns = analytics_df.pct_change().dropna()
+                        
+                        # Portfolio returns (equal weight)
+                        equal_weights = np.array([1/len(analytics_assets)] * len(analytics_assets))
+                        portfolio_returns = (analytics_returns * equal_weights).sum(axis=1)
+                        
+                        # Generate detailed analytics
+                        metrics = reporter.calculate_performance_metrics(portfolio_returns)
+                        
+                        # Risk-return analysis chart
+                        st.markdown("#### Risk-Return Analysis")
+                        
+                        risk_return_chart = reporter.generate_risk_return_analysis(portfolio_returns)
+                        if risk_return_chart:
+                            st.plotly_chart(risk_return_chart, width='stretch')
+                        
+                        # Statistical analysis
+                        st.markdown("#### Statistical Analysis")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("**Distribution Statistics:**")
+                            stats_df = pd.DataFrame({
+                                'Statistic': ['Mean (Daily)', 'Std Dev (Daily)', 'Skewness', 'Kurtosis', 'Jarque-Bera p-value'],
+                                'Value': [
+                                    f"{portfolio_returns.mean():.4f}",
+                                    f"{portfolio_returns.std():.4f}",
+                                    f"{metrics['skewness']:.3f}",
+                                    f"{metrics['kurtosis']:.3f}",
+                                    f"{stats.jarque_bera(portfolio_returns)[1]:.4f}"
+                                ]
+                            })
+                            st.dataframe(stats_df, hide_index=True)
+                        
+                        with col2:
+                            st.markdown("**Performance Percentiles:**")
+                            percentiles_df = pd.DataFrame({
+                                'Percentile': ['5th', '25th', '50th (Median)', '75th', '95th'],
+                                'Daily Return': [
+                                    f"{np.percentile(portfolio_returns, 5):.3%}",
+                                    f"{np.percentile(portfolio_returns, 25):.3%}",
+                                    f"{np.percentile(portfolio_returns, 50):.3%}",
+                                    f"{np.percentile(portfolio_returns, 75):.3%}",
+                                    f"{np.percentile(portfolio_returns, 95):.3%}"
+                                ]
+                            })
+                            st.dataframe(percentiles_df, hide_index=True)
+                        
+                        # Correlation analysis
+                        if len(analytics_assets) > 1:
+                            st.markdown("#### Asset Correlation Analysis")
+                            
+                            corr_matrix = analytics_returns.corr()
+                            
+                            fig_corr = px.imshow(
+                                corr_matrix,
+                                title="Asset Correlation Matrix",
+                                color_continuous_scale='RdBu',
+                                aspect='auto'
+                            )
+                            st.plotly_chart(fig_corr, width='stretch')
+                            
+                            # Average correlation
+                            avg_corr = (corr_matrix.values.sum() - len(analytics_assets)) / (len(analytics_assets) * (len(analytics_assets) - 1))
+                            st.info(f"Average correlation: {avg_corr:.3f}")
+                    
+                    except Exception as e:
+                        st.error(f"Detailed analytics generation failed: {str(e)}")
+        else:
+            st.info("Please select at least 1 asset for detailed analytics.")
+    
+    with tab3:
+        st.markdown("### Executive Summary Report")
+        st.markdown("Generate a high-level executive summary for stakeholder presentation.")
+        
+        # Executive summary configuration
+        exec_assets = st.multiselect(
+            "Select Portfolio Assets:",
+            summary['tickers'],
+            default=summary['tickers'][:3],
+            key="exec_assets"
+        )
+        
+        exec_period = st.selectbox(
+            "Reporting Period:",
+            ['Quarter', 'Year-to-Date', '1 Year', '3 Years'],
+            index=2,
+            key="exec_period"
+        )
+        
+        if len(exec_assets) >= 1:
+            if st.button("Generate Executive Summary", type="primary", key="generate_exec_summary"):
+                with st.spinner("Generating executive summary..."):
+                    try:
+                        # Get data based on period
+                        period_map = {'Quarter': 90, 'Year-to-Date': 365, '1 Year': 365, '3 Years': 1095}
+                        days_back = period_map[exec_period]
+                        start_date = datetime.now() - timedelta(days=days_back)
+                        
+                        exec_data = {}
+                        for asset in exec_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            mask = asset_prices.index >= pd.Timestamp(start_date)
+                            exec_data[asset] = asset_prices[mask]
+                        
+                        exec_df = pd.DataFrame(exec_data).dropna()
+                        exec_returns = exec_df.pct_change().dropna()
+                        
+                        # Portfolio returns (equal weight)
+                        equal_weights = np.array([1/len(exec_assets)] * len(exec_assets))
+                        portfolio_returns = (exec_returns * equal_weights).sum(axis=1)
+                        
+                        # Calculate key metrics
+                        metrics = reporter.calculate_performance_metrics(portfolio_returns)
+                        
+                        # Executive summary layout
+                        st.markdown("#### 📊 Executive Summary")
+                        st.markdown(f"**Portfolio Performance Report - {exec_period}**")
+                        st.markdown("---")
+                        
+                        # Key highlights
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric(
+                                "📈 Total Return",
+                                f"{metrics['total_return']:.1%}",
+                                help="Overall portfolio performance"
+                            )
+                        
+                        with col2:
+                            st.metric(
+                                "📊 Risk-Adjusted Return",
+                                f"{metrics['sharpe_ratio']:.2f}",
+                                help="Sharpe ratio - return per unit of risk"
+                            )
+                        
+                        with col3:
+                            st.metric(
+                                "⚠️ Maximum Drawdown", 
+                                f"{metrics['max_drawdown']:.1%}",
+                                help="Largest peak-to-trough decline"
+                            )
+                        
+                        # Performance narrative
+                        st.markdown("#### 📋 Performance Narrative")
+                        
+                        # Generate automated narrative
+                        performance_grade = "Strong" if metrics['total_return'] > 0.1 else "Moderate" if metrics['total_return'] > 0 else "Weak"
+                        risk_assessment = "Low" if metrics['volatility'] < 0.15 else "Moderate" if metrics['volatility'] < 0.25 else "High"
+                        
+                        narrative = f"""
+                        **Portfolio Overview:**
+                        The portfolio delivered a **{performance_grade.lower()}** performance during the {exec_period.lower()} period, 
+                        generating a total return of **{metrics['total_return']:.2%}**. 
+                        
+                        **Risk Management:**
+                        The portfolio exhibited **{risk_assessment.lower()}** volatility at **{metrics['volatility']:.1%}** annualized, 
+                        with a maximum drawdown of **{metrics['max_drawdown']:.1%}**.
+                        
+                        **Risk-Adjusted Performance:**
+                        The Sharpe ratio of **{metrics['sharpe_ratio']:.2f}** indicates {'excellent' if metrics['sharpe_ratio'] > 1 else 'good' if metrics['sharpe_ratio'] > 0.5 else 'poor'} 
+                        risk-adjusted returns.
+                        """
+                        
+                        st.markdown(narrative)
+                        
+                        # Key metrics table
+                        st.markdown("#### 📈 Key Performance Indicators")
+                        
+                        kpi_df = pd.DataFrame({
+                            'Metric': [
+                                'Total Return',
+                                'Annualized Return', 
+                                'Volatility',
+                                'Sharpe Ratio',
+                                'Maximum Drawdown',
+                                'Win Rate'
+                            ],
+                            'Value': [
+                                f"{metrics['total_return']:.2%}",
+                                f"{metrics['annualized_return']:.2%}",
+                                f"{metrics['volatility']:.2%}",
+                                f"{metrics['sharpe_ratio']:.3f}",
+                                f"{metrics['max_drawdown']:.2%}",
+                                f"{metrics['win_rate']:.1%}"
+                            ]
+                        })
+                        
+                        st.dataframe(kpi_df, hide_index=True)
+                        
+                        # Simple performance chart for executive view
+                        st.markdown("#### 📊 Portfolio Performance Trend")
+                        
+                        cumulative_returns = (1 + portfolio_returns).cumprod()
+                        
+                        fig_exec = go.Figure()
+                        fig_exec.add_trace(go.Scatter(
+                            x=cumulative_returns.index,
+                            y=cumulative_returns.values,
+                            mode='lines',
+                            name='Portfolio Value',
+                            line=dict(color='blue', width=3),
+                            fill='tonexty'
+                        ))
+                        
+                        fig_exec.update_layout(
+                            title=f"Portfolio Growth - {exec_period}",
+                            xaxis_title="Date",
+                            yaxis_title="Cumulative Return",
+                            height=400,
+                            showlegend=False
+                        )
+                        
+                        st.plotly_chart(fig_exec, width='stretch')
+                        
+                        # Executive summary footer
+                        st.markdown("---")
+                        st.markdown(f"*Report generated on {datetime.now().strftime('%B %d, %Y')} | Portfolio Forecasting System*")
+                    
+                    except Exception as e:
+                        st.error(f"Executive summary generation failed: {str(e)}")
+        else:
+            st.info("Please select at least 1 asset for executive summary.")
+
+
+def page_help():
+    """Help and documentation page."""
+    st.markdown('<div class="main-header">Help & Documentation</div>', unsafe_allow_html=True)
+    st.info("🚧 This feature will be implemented in the next phase.")
+
+
 def main():
     """Main application function."""
     # Initialize session state
@@ -5445,6 +5933,8 @@ def main():
         page_backtesting()
     elif current_page == "risk":
         page_risk_management()
+    elif current_page == "reports":
+        page_performance_reporting()
     elif current_page == "help":
         page_help()
     
