@@ -1315,7 +1315,536 @@ def page_model_comparison():
 def page_multivariate_analysis():
     """Multivariate analysis page."""
     st.markdown('<div class="main-header">Multivariate Analysis</div>', unsafe_allow_html=True)
-    st.info("🚧 This feature will be implemented in the next phase.")
+    
+    if 'data' not in st.session_state or st.session_state.data is None:
+        st.warning("Please load data first from the Home page.")
+        return
+    
+    data = st.session_state.data
+    summary = get_data_summary(data)
+    
+    st.markdown("""
+    Analyze relationships between multiple stocks and create multivariate forecasts 
+    using Vector Autoregression (VAR) models that capture cross-asset dependencies.
+    """)
+    
+    # Create tabs for different multivariate analyses
+    tab1, tab2, tab3 = st.tabs(["🔗 VAR Forecasting", "📊 Correlation Analysis", "🌐 Portfolio Dynamics"])
+    
+    with tab1:
+        st.markdown("### Vector Autoregression (VAR) Forecasting")
+        st.markdown("VAR models capture the linear interdependencies between multiple time series.")
+        
+        # Configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            var_tickers = st.multiselect(
+                "Select Tickers for VAR Model:",
+                summary['tickers'],
+                default=summary['tickers'][:3],
+                key="var_tickers",
+                help="Select 2-5 tickers for optimal VAR performance"
+            )
+            
+            var_column = st.selectbox(
+                "Data Column:",
+                ['close', 'open', 'high', 'low'],
+                index=0,
+                key="var_column"
+            )
+        
+        with col2:
+            var_maxlags = st.slider(
+                "Maximum Lags:",
+                1, 15, 5,
+                key="var_maxlags",
+                help="Maximum number of lags to consider for VAR model"
+            )
+            
+            var_test_size = st.slider(
+                "Test Size (%):",
+                10, 40, 20,
+                key="var_test_size"
+            )
+            
+            var_forecast_steps = st.slider(
+                "Forecast Steps:",
+                5, 50, 20,
+                key="var_forecast_steps"
+            )
+        
+        # Advanced VAR options
+        with st.expander("Advanced VAR Configuration"):
+            var_ic = st.selectbox(
+                "Information Criterion for Lag Selection:",
+                ['aic', 'bic', 'hqic', 'fpe'],
+                index=0,
+                key="var_ic",
+                help="Criterion used to select optimal number of lags"
+            )
+            
+            var_trend = st.selectbox(
+                "Trend Component:",
+                ['const', 'none', 'linear', 'quadratic'],
+                index=0,
+                key="var_trend",
+                help="Type of deterministic trend to include"
+            )
+            
+            var_diff = st.checkbox(
+                "Apply Differencing",
+                value=True,
+                key="var_diff",
+                help="Apply first differencing to ensure stationarity"
+            )
+        
+        if len(var_tickers) >= 2:
+            if st.button("Run VAR Analysis", type="primary", key="run_var"):
+                with st.spinner("Running VAR analysis..."):
+                    try:
+                        # Get multivariate data
+                        multi_data = get_multiple_tickers_data(data, var_tickers, var_column)
+                        
+                        if multi_data.empty:
+                            st.error("No data available for selected tickers.")
+                            return
+                        
+                        # Split data
+                        split_point = int(len(multi_data) * (1 - var_test_size/100))
+                        train_data = multi_data.iloc[:split_point]
+                        test_data = multi_data.iloc[split_point:]
+                        
+                        st.markdown("### VAR Model Results")
+                        
+                        # Initialize VAR model
+                        var_model = VARModel(maxlags=var_maxlags)
+                        
+                        # Fit the model
+                        var_model.fit(train_data)
+                        
+                        # Generate forecasts
+                        forecasts, conf_intervals = var_model.predict(steps=min(var_forecast_steps, len(test_data)))
+                        
+                        # Display model summary
+                        st.markdown("#### Model Summary")
+                        model_summary = var_model.get_model_summary()
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Selected Lags", model_summary.get('lags', 'N/A'))
+                        with col2:
+                            st.metric("AIC", f"{model_summary.get('aic', 0):.2f}")
+                        with col3:
+                            st.metric("BIC", f"{model_summary.get('bic', 0):.2f}")
+                        
+                        # Forecast visualization
+                        st.markdown("#### Forecast Results")
+                        
+                        for ticker in var_tickers:
+                            if ticker in forecasts.columns and ticker in test_data.columns:
+                                fig = go.Figure()
+                                
+                                # Historical data
+                                historical_data = multi_data[ticker].tail(100)  # Show last 100 points for context
+                                fig.add_trace(go.Scatter(
+                                    x=historical_data.index,
+                                    y=historical_data.values,
+                                    mode='lines',
+                                    name='Historical',
+                                    line=dict(color='blue', width=2)
+                                ))
+                                
+                                # Actual test data
+                                actual_test = test_data[ticker].iloc[:len(forecasts)]
+                                fig.add_trace(go.Scatter(
+                                    x=actual_test.index,
+                                    y=actual_test.values,
+                                    mode='lines',
+                                    name='Actual',
+                                    line=dict(color='black', width=2)
+                                ))
+                                
+                                # Forecasts
+                                fig.add_trace(go.Scatter(
+                                    x=forecasts.index,
+                                    y=forecasts[ticker].values,
+                                    mode='lines',
+                                    name='VAR Forecast',
+                                    line=dict(color='red', width=2, dash='dash')
+                                ))
+                                
+                                # Confidence intervals if available
+                                if conf_intervals is not None and ticker in conf_intervals:
+                                    lower_bound = conf_intervals[ticker].iloc[:, 0]
+                                    upper_bound = conf_intervals[ticker].iloc[:, 1]
+                                    
+                                    fig.add_trace(go.Scatter(
+                                        x=forecasts.index,
+                                        y=upper_bound.values,
+                                        mode='lines',
+                                        line=dict(width=0),
+                                        showlegend=False,
+                                        hoverinfo='skip'
+                                    ))
+                                    
+                                    fig.add_trace(go.Scatter(
+                                        x=forecasts.index,
+                                        y=lower_bound.values,
+                                        mode='lines',
+                                        line=dict(width=0),
+                                        fill='tonexty',
+                                        fillcolor='rgba(255,0,0,0.2)',
+                                        name='Confidence Interval',
+                                        hoverinfo='skip'
+                                    ))
+                                
+                                fig.update_layout(
+                                    title=f"{ticker} - VAR Forecast",
+                                    xaxis_title="Date",
+                                    yaxis_title="Price ($)",
+                                    height=400
+                                )
+                                
+                                st.plotly_chart(fig, width='stretch')
+                        
+                        # Performance metrics
+                        st.markdown("#### Performance Metrics")
+                        
+                        var_metrics = {}
+                        for ticker in var_tickers:
+                            if ticker in forecasts.columns and ticker in test_data.columns:
+                                actual_values = test_data[ticker].iloc[:len(forecasts)].values
+                                forecast_values = forecasts[ticker].values
+                                
+                                if len(actual_values) == len(forecast_values):
+                                    metrics = calculate_all_metrics(actual_values, forecast_values)
+                                    var_metrics[ticker] = metrics
+                        
+                        if var_metrics:
+                            metrics_df = pd.DataFrame(var_metrics).T
+                            st.dataframe(metrics_df.round(4))
+                            
+                            # Best performing asset
+                            best_ticker = metrics_df['RMSE'].idxmin()
+                            st.success(f"🎯 Best VAR Performance: **{best_ticker}** (RMSE: {metrics_df.loc[best_ticker, 'RMSE']:.4f})")
+                        
+                        # Granger Causality Tests
+                        if hasattr(var_model, 'model') and var_model.model is not None:
+                            st.markdown("#### Granger Causality Analysis")
+                            st.markdown("Tests whether one time series can predict another:")
+                            
+                            try:
+                                from statsmodels.tsa.stattools import grangercausalitytests
+                                
+                                causality_results = {}
+                                for i, ticker1 in enumerate(var_tickers):
+                                    for j, ticker2 in enumerate(var_tickers):
+                                        if i != j and ticker1 in train_data.columns and ticker2 in train_data.columns:
+                                            try:
+                                                # Prepare data for Granger test
+                                                test_data_granger = train_data[[ticker2, ticker1]].dropna()
+                                                
+                                                if len(test_data_granger) > 20:  # Minimum data requirement
+                                                    gc_result = grangercausalitytests(test_data_granger, maxlag=3, verbose=False)
+                                                    
+                                                    # Extract p-value for lag 1
+                                                    if 1 in gc_result:
+                                                        p_value = gc_result[1][0]['ssr_ftest'][1]
+                                                        causality_results[f"{ticker1} → {ticker2}"] = {
+                                                            'p_value': p_value,
+                                                            'significant': p_value < 0.05
+                                                        }
+                                            except:
+                                                continue
+                                
+                                if causality_results:
+                                    causality_df = pd.DataFrame(causality_results).T
+                                    causality_df['Significant'] = causality_df['significant'].map({True: '✓', False: '✗'})
+                                    causality_df['P-Value'] = causality_df['p_value'].round(4)
+                                    
+                                    display_causality = causality_df[['P-Value', 'Significant']].sort_values('P-Value')
+                                    st.dataframe(display_causality)
+                                    
+                                    significant_relationships = display_causality[display_causality['Significant'] == '✓']
+                                    if not significant_relationships.empty:
+                                        st.info(f"Found {len(significant_relationships)} significant Granger causality relationships (p < 0.05)")
+                                    else:
+                                        st.info("No significant Granger causality relationships found at 5% level")
+                            
+                            except ImportError:
+                                st.warning("Granger causality tests require additional dependencies")
+                            except Exception as e:
+                                st.warning(f"Granger causality analysis failed: {str(e)}")
+                    
+                    except Exception as e:
+                        st.error(f"VAR analysis failed: {str(e)}")
+                        st.error("This might be due to insufficient data or numerical issues. Try reducing the number of lags or using different tickers.")
+        else:
+            st.info("Please select at least 2 tickers for VAR analysis.")
+    
+    with tab2:
+        st.markdown("### Correlation Analysis")
+        st.markdown("Analyze relationships and dependencies between different assets.")
+        
+        # Correlation configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            corr_tickers = st.multiselect(
+                "Select Tickers:",
+                summary['tickers'],
+                default=summary['tickers'],
+                key="corr_tickers"
+            )
+            
+            corr_method = st.selectbox(
+                "Correlation Method:",
+                ['pearson', 'spearman', 'kendall'],
+                key="corr_method"
+            )
+        
+        with col2:
+            corr_window = st.slider(
+                "Rolling Window (days):",
+                10, 100, 30,
+                key="corr_window",
+                help="Window size for rolling correlation"
+            )
+            
+            corr_type = st.selectbox(
+                "Analysis Type:",
+                ['Price Correlation', 'Return Correlation', 'Rolling Correlation'],
+                key="corr_type"
+            )
+        
+        if len(corr_tickers) >= 2:
+            if st.button("Run Correlation Analysis", key="run_corr"):
+                with st.spinner("Calculating correlations..."):
+                    # Get data
+                    corr_data = get_multiple_tickers_data(data, corr_tickers, 'close')
+                    
+                    if corr_type == 'Price Correlation':
+                        analysis_data = corr_data
+                        title_suffix = "Price Levels"
+                    elif corr_type == 'Return Correlation':
+                        analysis_data = corr_data.pct_change().dropna()
+                        title_suffix = "Returns"
+                    else:  # Rolling Correlation
+                        analysis_data = corr_data.pct_change().dropna()
+                        title_suffix = f"Rolling {corr_window}-day Returns"
+                    
+                    # Calculate correlation matrix
+                    if corr_type != 'Rolling Correlation':
+                        corr_matrix = analysis_data.corr(method=corr_method)
+                        
+                        # Display correlation heatmap
+                        fig_heatmap = px.imshow(
+                            corr_matrix.values,
+                            labels=dict(x="Ticker", y="Ticker", color="Correlation"),
+                            x=corr_matrix.columns,
+                            y=corr_matrix.index,
+                            title=f"Correlation Matrix - {title_suffix}",
+                            color_continuous_scale="RdBu_r",
+                            aspect="auto"
+                        )
+                        fig_heatmap.update_layout(height=500)
+                        st.plotly_chart(fig_heatmap, width='stretch')
+                        
+                        # Correlation statistics
+                        st.markdown("#### Correlation Statistics")
+                        
+                        # Extract upper triangle (excluding diagonal)
+                        mask = np.triu(np.ones_like(corr_matrix), k=1).astype(bool)
+                        correlations = corr_matrix.where(mask).stack().dropna()
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Average Correlation", f"{correlations.mean():.3f}")
+                        with col2:
+                            st.metric("Max Correlation", f"{correlations.max():.3f}")
+                        with col3:
+                            st.metric("Min Correlation", f"{correlations.min():.3f}")
+                        
+                        # Top correlations
+                        st.markdown("#### Strongest Correlations")
+                        correlations_sorted = correlations.abs().sort_values(ascending=False)
+                        top_correlations = correlations_sorted.head(10)
+                        
+                        for pair, corr_val in top_correlations.items():
+                            actual_corr = correlations[pair]
+                            st.write(f"**{pair[0]} ↔ {pair[1]}**: {actual_corr:.3f}")
+                    
+                    else:
+                        # Rolling correlation analysis
+                        st.markdown("#### Rolling Correlation Analysis")
+                        
+                        if len(corr_tickers) == 2:
+                            # Two-asset rolling correlation
+                            ticker1, ticker2 = corr_tickers[0], corr_tickers[1]
+                            rolling_corr = analysis_data[ticker1].rolling(corr_window).corr(analysis_data[ticker2])
+                            
+                            fig_rolling = go.Figure()
+                            fig_rolling.add_trace(go.Scatter(
+                                x=rolling_corr.index,
+                                y=rolling_corr.values,
+                                mode='lines',
+                                name=f'{ticker1} vs {ticker2}',
+                                line=dict(width=2)
+                            ))
+                            
+                            fig_rolling.update_layout(
+                                title=f"Rolling {corr_window}-day Correlation: {ticker1} vs {ticker2}",
+                                xaxis_title="Date",
+                                yaxis_title="Correlation",
+                                height=400
+                            )
+                            
+                            st.plotly_chart(fig_rolling, width='stretch')
+                            
+                            # Rolling correlation statistics
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Mean Rolling Corr", f"{rolling_corr.mean():.3f}")
+                            with col2:
+                                st.metric("Std Rolling Corr", f"{rolling_corr.std():.3f}")
+                            with col3:
+                                st.metric("Current Corr", f"{rolling_corr.iloc[-1]:.3f}")
+                        
+                        else:
+                            # Multiple assets - show average rolling correlation
+                            rolling_corrs = {}
+                            for i in range(len(corr_tickers)):
+                                for j in range(i+1, len(corr_tickers)):
+                                    ticker1, ticker2 = corr_tickers[i], corr_tickers[j]
+                                    rolling_corr = analysis_data[ticker1].rolling(corr_window).corr(analysis_data[ticker2])
+                                    rolling_corrs[f"{ticker1}-{ticker2}"] = rolling_corr
+                            
+                            # Plot multiple rolling correlations
+                            fig_multi = go.Figure()
+                            colors = px.colors.qualitative.Set3
+                            
+                            for i, (pair, corr_series) in enumerate(rolling_corrs.items()):
+                                fig_multi.add_trace(go.Scatter(
+                                    x=corr_series.index,
+                                    y=corr_series.values,
+                                    mode='lines',
+                                    name=pair,
+                                    line=dict(color=colors[i % len(colors)], width=2)
+                                ))
+                            
+                            fig_multi.update_layout(
+                                title=f"Rolling {corr_window}-day Correlations",
+                                xaxis_title="Date",
+                                yaxis_title="Correlation",
+                                height=500
+                            )
+                            
+                            st.plotly_chart(fig_multi, width='stretch')
+                    
+                    # Correlation matrix table
+                    st.markdown("#### Correlation Matrix")
+                    if corr_type != 'Rolling Correlation':
+                        st.dataframe(corr_matrix.round(3))
+    
+    with tab3:
+        st.markdown("### Portfolio Dynamics")
+        st.markdown("Analyze portfolio-level relationships and risk metrics.")
+        
+        # Portfolio configuration
+        portfolio_tickers = st.multiselect(
+            "Select Portfolio Assets:",
+            summary['tickers'],
+            default=summary['tickers'][:4],
+            key="portfolio_tickers"
+        )
+        
+        if len(portfolio_tickers) >= 2:
+            # Get portfolio data
+            portfolio_data = get_multiple_tickers_data(data, portfolio_tickers, 'close')
+            portfolio_returns = portfolio_data.pct_change().dropna()
+            
+            # Portfolio analysis
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### Risk Metrics")
+                
+                # Individual asset risk
+                risk_metrics = {}
+                for ticker in portfolio_tickers:
+                    returns = portfolio_returns[ticker]
+                    risk_metrics[ticker] = {
+                        'Volatility': returns.std() * np.sqrt(252),
+                        'Sharpe_Approx': returns.mean() / returns.std() * np.sqrt(252) if returns.std() > 0 else 0,
+                        'Max_Drawdown': (returns.cumsum().cummax() - returns.cumsum()).max()
+                    }
+                
+                risk_df = pd.DataFrame(risk_metrics).T
+                st.dataframe(risk_df.round(4))
+            
+            with col2:
+                st.markdown("#### Portfolio Composition")
+                
+                # Equal weight portfolio
+                equal_weights = np.ones(len(portfolio_tickers)) / len(portfolio_tickers)
+                portfolio_return = (portfolio_returns * equal_weights).sum(axis=1)
+                
+                portfolio_vol = portfolio_return.std() * np.sqrt(252)
+                portfolio_sharpe = portfolio_return.mean() / portfolio_return.std() * np.sqrt(252) if portfolio_return.std() > 0 else 0
+                
+                st.metric("Portfolio Volatility", f"{portfolio_vol:.2%}")
+                st.metric("Portfolio Sharpe", f"{portfolio_sharpe:.3f}")
+                
+                # Weights display
+                weights_df = pd.DataFrame({
+                    'Ticker': portfolio_tickers,
+                    'Weight': [f"{w:.1%}" for w in equal_weights]
+                })
+                st.dataframe(weights_df, hide_index=True)
+            
+            # Portfolio correlation structure
+            st.markdown("#### Portfolio Correlation Structure")
+            
+            # Eigenvalue analysis
+            corr_matrix = portfolio_returns.corr()
+            eigenvalues, eigenvectors = np.linalg.eig(corr_matrix)
+            
+            # Sort eigenvalues in descending order
+            sorted_indices = np.argsort(eigenvalues)[::-1]
+            eigenvalues = eigenvalues[sorted_indices]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Eigenvalue plot
+                fig_eigen = px.bar(
+                    x=range(1, len(eigenvalues) + 1),
+                    y=eigenvalues,
+                    title="Correlation Matrix Eigenvalues",
+                    labels={'x': 'Component', 'y': 'Eigenvalue'}
+                )
+                st.plotly_chart(fig_eigen, width='stretch')
+            
+            with col2:
+                # Diversification metrics
+                st.markdown("**Diversification Metrics:**")
+                
+                # Average correlation
+                mask = np.triu(np.ones_like(corr_matrix), k=1).astype(bool)
+                avg_corr = corr_matrix.where(mask).stack().mean()
+                
+                # Diversification ratio
+                individual_vol = portfolio_returns.std()
+                weighted_avg_vol = (individual_vol * equal_weights).sum()
+                diversification_ratio = weighted_avg_vol / portfolio_vol if portfolio_vol > 0 else 1
+                
+                st.metric("Average Correlation", f"{avg_corr:.3f}")
+                st.metric("Diversification Ratio", f"{diversification_ratio:.3f}")
+                st.metric("Effective Assets", f"{1/np.sum(equal_weights**2):.1f}")
+        
+        else:
+            st.info("Please select at least 2 assets for portfolio analysis.")
 
 
 def page_portfolio_optimization():
