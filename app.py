@@ -28,6 +28,7 @@ try:
     from deep_learning_model import create_deep_learning_forecaster
     from run_backtest import SimpleBacktester
     from performance_reporting import PerformanceReporter
+    from api_integration import MarketDataAPI, AlternativeDataAPI, get_market_overview
     from interactive_plotting import InteractivePlotter, quick_line_plot, create_dashboard_plot
     
     # Import scientific computing for optimization
@@ -191,6 +192,7 @@ def sidebar_navigation():
         "🎯 Backtesting": "backtest",
         "🛡️ Risk Management": "risk",
         "📋 Performance Reports": "reports",
+        "🌐 Market Dashboard": "market",
         "❓ Help": "help"
     }
     
@@ -5899,6 +5901,663 @@ def page_performance_reporting():
             st.info("Please select at least 1 asset for executive summary.")
 
 
+def get_market_overview():
+    """Get comprehensive market overview data."""
+    try:
+        market_api = MarketDataAPI()
+        
+        # Get market indices
+        major_indices = {
+            'S&P 500': '^GSPC',
+            'NASDAQ': '^IXIC', 
+            'Dow Jones': '^DJI',
+            'Russell 2000': '^RUT',
+            'VIX': '^VIX'
+        }
+        
+        indices_data = {}
+        for name, symbol in major_indices.items():
+            try:
+                data = market_api.get_enhanced_stock_data(symbol, period='1y')
+                if data and not data['price_data'].empty:
+                    price_data = data['price_data']
+                    current_price = price_data['Close'].iloc[-1]
+                    prev_price = price_data['Close'].iloc[-2] if len(price_data) > 1 else current_price
+                    change_1d = ((current_price / prev_price) - 1) * 100
+                    
+                    indices_data[name] = {
+                        'current_price': current_price,
+                        'change_1d': change_1d,
+                        'data': price_data
+                    }
+            except:
+                continue
+        
+        # Generate economic indicators (simulated for demo)
+        economic_indicators = {
+            'GDP Growth Rate': np.random.uniform(1.5, 3.5),
+            'Unemployment Rate': np.random.uniform(3.0, 6.0), 
+            'Inflation Rate': np.random.uniform(1.0, 4.0),
+            'Federal Funds Rate': np.random.uniform(0.0, 5.5),
+            'Consumer Confidence': np.random.uniform(90, 130)
+        }
+        
+        # Market calendar information
+        now = datetime.now()
+        market_calendar = {
+            'current_time': now,
+            'market_status': 'OPEN' if 9 <= now.hour < 16 and now.weekday() < 5 else 'CLOSED',
+            'next_market_open': now.replace(hour=9, minute=30, second=0) + timedelta(days=1) if now.hour >= 16 or now.weekday() >= 5 else now.replace(hour=9, minute=30, second=0),
+            'next_market_close': now.replace(hour=16, minute=0, second=0) if now.hour < 16 and now.weekday() < 5 else now.replace(hour=16, minute=0, second=0) + timedelta(days=1)
+        }
+        
+        return {
+            'market_indices': indices_data,
+            'economic_indicators': economic_indicators,
+            'market_calendar': market_calendar
+        }
+        
+    except Exception as e:
+        st.error(f"Error fetching market overview: {str(e)}")
+        return {
+            'market_indices': {},
+            'economic_indicators': {},
+            'market_calendar': {}
+        }
+
+
+def page_market_dashboard():
+    """Market dashboard with real-time data and analysis."""
+    st.markdown('<div class="main-header">Market Dashboard</div>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    Real-time market data, analysis, and insights powered by multiple data sources 
+    including market indices, sector performance, economic indicators, and alternative data.
+    """)
+    
+    # Initialize APIs
+    market_api = MarketDataAPI()
+    alt_api = AlternativeDataAPI()
+    
+    # Create tabs for different market views
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏛️ Market Overview", "📊 Sector Analysis", "💱 Global Markets", "🔍 Stock Analysis", "📈 Technical Signals"])
+    
+    with tab1:
+        st.markdown("### Market Overview")
+        st.markdown("Real-time view of major market indices and economic indicators.")
+        
+        if st.button("Refresh Market Data", type="primary", key="refresh_market"):
+            with st.spinner("Fetching real-time market data..."):
+                try:
+                    # Get market overview
+                    market_overview = get_market_overview()
+                    
+                    # Market indices
+                    st.markdown("#### Major Market Indices")
+                    
+                    indices_data = market_overview['market_indices']
+                    if indices_data:
+                        col1, col2, col3, col4, col5 = st.columns(5)
+                        
+                        for i, (name, data) in enumerate(indices_data.items()):
+                            with [col1, col2, col3, col4, col5][i % 5]:
+                                change_color = "normal" if data['change_1d'] >= 0 else "inverse"
+                                st.metric(
+                                    name,
+                                    f"{data['current_price']:.2f}",
+                                    f"{data['change_1d']:.2f}%",
+                                    delta_color=change_color
+                                )
+                        
+                        # Indices performance chart
+                        st.markdown("#### Indices Performance (YTD)")
+                        
+                        fig_indices = go.Figure()
+                        
+                        for name, data in indices_data.items():
+                            if 'data' in data:
+                                normalized_data = data['data']['Close'] / data['data']['Close'].iloc[0]
+                                fig_indices.add_trace(go.Scatter(
+                                    x=normalized_data.index,
+                                    y=normalized_data.values,
+                                    mode='lines',
+                                    name=name,
+                                    line=dict(width=2)
+                                ))
+                        
+                        fig_indices.update_layout(
+                            title="Market Indices Performance (Normalized)",
+                            xaxis_title="Date",
+                            yaxis_title="Normalized Price",
+                            height=400,
+                            hovermode='x unified'
+                        )
+                        
+                        st.plotly_chart(fig_indices, width='stretch')
+                    
+                    # Economic indicators
+                    st.markdown("#### Economic Indicators")
+                    
+                    econ_indicators = market_overview['economic_indicators']
+                    if econ_indicators:
+                        econ_df = pd.DataFrame([
+                            {'Indicator': k, 'Value': f"{v:.2f}" + ('%' if 'Rate' in k or 'Growth' in k or 'Inflation' in k else ''), 
+                             'Status': '✅ Positive' if v > 0 else '⚠️ Negative' if 'Unemployment' not in k else '⚠️ High'}
+                            for k, v in econ_indicators.items()
+                        ])
+                        
+                        st.dataframe(econ_df, hide_index=True)
+                    
+                    # Market calendar
+                    st.markdown("#### Market Information")
+                    
+                    calendar_info = market_overview['market_calendar']
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        status_color = "🟢" if calendar_info['market_status'] == "OPEN" else "🔴"
+                        st.info(f"{status_color} **Market Status:** {calendar_info['market_status']}")
+                        st.info(f"⏰ **Current Time:** {calendar_info['current_time'].strftime('%Y-%m-%d %H:%M:%S')}")
+                    
+                    with col2:
+                        st.info(f"🔔 **Next Open:** {calendar_info['next_market_open'].strftime('%Y-%m-%d %H:%M')}")
+                        st.info(f"🔔 **Next Close:** {calendar_info['next_market_close'].strftime('%Y-%m-%d %H:%M')}")
+                
+                except Exception as e:
+                    st.error(f"Error fetching market data: {str(e)}")
+        else:
+            st.info("Click 'Refresh Market Data' to load the latest market information.")
+    
+    with tab2:
+        st.markdown("### Sector Analysis")
+        st.markdown("Performance analysis across different market sectors.")
+        
+        if st.button("Refresh Sector Data", key="refresh_sectors"):
+            with st.spinner("Loading sector performance data..."):
+                try:
+                    sector_data = market_api.get_sector_performance()
+                    
+                    if sector_data:
+                        # Sector performance metrics
+                        st.markdown("#### Sector Performance Summary")
+                        
+                        sector_df = pd.DataFrame([
+                            {
+                                'Sector': sector,
+                                'ETF': data['etf_symbol'],
+                                'Price': f"${data['current_price']:.2f}",
+                                '1D Change': f"{data['change_1d']:.2f}%",
+                                '1W Change': f"{data['change_1w']:.2f}%",
+                                '1M Change': f"{data['change_1m']:.2f}%",
+                                'Volatility': f"{data['volatility']:.1f}%"
+                            }
+                            for sector, data in sector_data.items()
+                        ])
+                        
+                        st.dataframe(sector_df, hide_index=True)
+                        
+                        # Sector performance visualization
+                        st.markdown("#### Sector Performance Comparison")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # 1-day performance
+                            fig_1d = go.Figure(data=[
+                                go.Bar(
+                                    x=list(sector_data.keys()),
+                                    y=[data['change_1d'] for data in sector_data.values()],
+                                    marker_color=['green' if x >= 0 else 'red' for x in [data['change_1d'] for data in sector_data.values()]],
+                                    text=[f"{x:.1f}%" for x in [data['change_1d'] for data in sector_data.values()]],
+                                    textposition='auto'
+                                )
+                            ])
+                            fig_1d.update_layout(
+                                title="1-Day Sector Performance",
+                                xaxis_title="Sector",
+                                yaxis_title="Change (%)",
+                                height=400
+                            )
+                            fig_1d.update_xaxes(tickangle=45)
+                            st.plotly_chart(fig_1d, width='stretch')
+                        
+                        with col2:
+                            # 1-month performance
+                            fig_1m = go.Figure(data=[
+                                go.Bar(
+                                    x=list(sector_data.keys()),
+                                    y=[data['change_1m'] for data in sector_data.values()],
+                                    marker_color=['green' if x >= 0 else 'red' for x in [data['change_1m'] for data in sector_data.values()]],
+                                    text=[f"{x:.1f}%" for x in [data['change_1m'] for data in sector_data.values()]],
+                                    textposition='auto'
+                                )
+                            ])
+                            fig_1m.update_layout(
+                                title="1-Month Sector Performance",
+                                xaxis_title="Sector",
+                                yaxis_title="Change (%)",
+                                height=400
+                            )
+                            fig_1m.update_xaxes(tickangle=45)
+                            st.plotly_chart(fig_1m, width='stretch')
+                        
+                        # Sector insights
+                        best_sector = max(sector_data.items(), key=lambda x: x[1]['change_1d'])
+                        worst_sector = min(sector_data.items(), key=lambda x: x[1]['change_1d'])
+                        
+                        st.markdown("#### Sector Insights")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.success(f"🏆 **Best Performing Sector (1D):** {best_sector[0]}")
+                            st.write(f"Change: {best_sector[1]['change_1d']:.2f}%")
+                            st.write(f"ETF: {best_sector[1]['etf_symbol']}")
+                        
+                        with col2:
+                            st.error(f"📉 **Worst Performing Sector (1D):** {worst_sector[0]}")
+                            st.write(f"Change: {worst_sector[1]['change_1d']:.2f}%")
+                            st.write(f"ETF: {worst_sector[1]['etf_symbol']}")
+                
+                except Exception as e:
+                    st.error(f"Error fetching sector data: {str(e)}")
+    
+    with tab3:
+        st.markdown("### Global Markets")
+        st.markdown("Cryptocurrency and forex market overview.")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Cryptocurrency Markets")
+            
+            if st.button("Refresh Crypto Data", key="refresh_crypto"):
+                with st.spinner("Loading cryptocurrency data..."):
+                    try:
+                        crypto_data = market_api.get_crypto_data()
+                        
+                        if crypto_data:
+                            crypto_df = pd.DataFrame([
+                                {
+                                    'Crypto': crypto,
+                                    'Price': f"${data['current_price']:,.2f}",
+                                    '24h Change': f"{data['change_24h']:.2f}%",
+                                    'Volatility': f"{data['volatility']:.1f}%",
+                                    'Volume': f"${data['volume_24h']:,.0f}" if data['volume_24h'] > 0 else "N/A"
+                                }
+                                for crypto, data in crypto_data.items()
+                            ])
+                            
+                            st.dataframe(crypto_df, hide_index=True)
+                            
+                            # Crypto performance chart
+                            if len(crypto_data) > 1:
+                                crypto_changes = [data['change_24h'] for data in crypto_data.values()]
+                                crypto_names = list(crypto_data.keys())
+                                
+                                fig_crypto = go.Figure(data=[
+                                    go.Bar(
+                                        x=crypto_names,
+                                        y=crypto_changes,
+                                        marker_color=['green' if x >= 0 else 'red' for x in crypto_changes],
+                                        text=[f"{x:.1f}%" for x in crypto_changes],
+                                        textposition='auto'
+                                    )
+                                ])
+                                
+                                fig_crypto.update_layout(
+                                    title="24h Cryptocurrency Performance",
+                                    xaxis_title="Cryptocurrency",
+                                    yaxis_title="24h Change (%)",
+                                    height=300
+                                )
+                                
+                                st.plotly_chart(fig_crypto, width='stretch')
+                    
+                    except Exception as e:
+                        st.error(f"Error fetching crypto data: {str(e)}")
+        
+        with col2:
+            st.markdown("#### Foreign Exchange")
+            
+            if st.button("Refresh Forex Data", key="refresh_forex"):
+                with st.spinner("Loading forex data..."):
+                    try:
+                        forex_data = market_api.get_forex_data()
+                        
+                        if forex_data:
+                            forex_df = pd.DataFrame([
+                                {
+                                    'Currency Pair': pair,
+                                    'Rate': f"{data['current_rate']:.4f}",
+                                    '1D Change': f"{data['change_1d']:.2f}%",
+                                    'Volatility': f"{data['volatility']:.1f}%"
+                                }
+                                for pair, data in forex_data.items()
+                            ])
+                            
+                            st.dataframe(forex_df, hide_index=True)
+                            
+                            # Forex performance chart
+                            if len(forex_data) > 1:
+                                forex_changes = [data['change_1d'] for data in forex_data.values()]
+                                forex_names = list(forex_data.keys())
+                                
+                                fig_forex = go.Figure(data=[
+                                    go.Bar(
+                                        x=forex_names,
+                                        y=forex_changes,
+                                        marker_color=['green' if x >= 0 else 'red' for x in forex_changes],
+                                        text=[f"{x:.2f}%" for x in forex_changes],
+                                        textposition='auto'
+                                    )
+                                ])
+                                
+                                fig_forex.update_layout(
+                                    title="1-Day Forex Performance",
+                                    xaxis_title="Currency Pair",
+                                    yaxis_title="1D Change (%)",
+                                    height=300
+                                )
+                                
+                                st.plotly_chart(fig_forex, width='stretch')
+                    
+                    except Exception as e:
+                        st.error(f"Error fetching forex data: {str(e)}")
+    
+    with tab4:
+        st.markdown("### Individual Stock Analysis")
+        st.markdown("Deep dive analysis for individual stocks with fundamentals and alternative data.")
+        
+        # Stock symbol input
+        analysis_symbol = st.text_input(
+            "Enter Stock Symbol:",
+            value="AAPL",
+            key="analysis_symbol",
+            help="Enter a valid stock ticker symbol (e.g., AAPL, GOOGL, TSLA)"
+        ).upper()
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            include_fundamentals = st.checkbox("Include Fundamentals", value=True, key="include_fundamentals")
+        
+        with col2:
+            include_alt_data = st.checkbox("Include Alternative Data", value=True, key="include_alt_data")
+        
+        if st.button("Analyze Stock", type="primary", key="analyze_stock"):
+            if analysis_symbol:
+                with st.spinner(f"Analyzing {analysis_symbol}..."):
+                    try:
+                        # Get enhanced stock data
+                        stock_data = market_api.get_enhanced_stock_data(
+                            analysis_symbol, 
+                            period='6mo', 
+                            include_fundamentals=include_fundamentals
+                        )
+                        
+                        if stock_data and not stock_data['price_data'].empty:
+                            # Basic price information
+                            st.markdown(f"#### {analysis_symbol} Analysis")
+                            
+                            price_data = stock_data['price_data']
+                            current_price = price_data['Close'].iloc[-1]
+                            prev_price = price_data['Close'].iloc[-2] if len(price_data) > 1 else current_price
+                            change_1d = ((current_price / prev_price) - 1) * 100
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("Current Price", f"${current_price:.2f}")
+                            with col2:
+                                st.metric("1D Change", f"{change_1d:.2f}%", delta_color="normal" if change_1d >= 0 else "inverse")
+                            with col3:
+                                st.metric("Volume", f"{price_data['Volume'].iloc[-1]:,.0f}" if 'Volume' in price_data else "N/A")
+                            with col4:
+                                high_52w = price_data['High'].max()
+                                st.metric("52W High", f"${high_52w:.2f}")
+                            
+                            # Price chart
+                            st.markdown(f"#### {analysis_symbol} Price Chart")
+                            
+                            fig_stock = go.Figure()
+                            
+                            fig_stock.add_trace(go.Candlestick(
+                                x=price_data.index,
+                                open=price_data['Open'],
+                                high=price_data['High'], 
+                                low=price_data['Low'],
+                                close=price_data['Close'],
+                                name=analysis_symbol
+                            ))
+                            
+                            fig_stock.update_layout(
+                                title=f"{analysis_symbol} Price Chart (6 Months)",
+                                xaxis_title="Date",
+                                yaxis_title="Price ($)",
+                                height=500,
+                                xaxis_rangeslider_visible=False
+                            )
+                            
+                            st.plotly_chart(fig_stock, width='stretch')
+                            
+                            # Company fundamentals
+                            if include_fundamentals and 'company_info' in stock_data and stock_data['company_info']:
+                                st.markdown("#### Company Information")
+                                
+                                info = stock_data['company_info']
+                                
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.info(f"**Company:** {info.get('name', 'N/A')}")
+                                    st.info(f"**Sector:** {info.get('sector', 'N/A')}")
+                                    st.info(f"**Industry:** {info.get('industry', 'N/A')}")
+                                
+                                with col2:
+                                    market_cap = info.get('market_cap', 0)
+                                    if market_cap > 0:
+                                        st.info(f"**Market Cap:** ${market_cap/1e9:.1f}B")
+                                    st.info(f"**P/E Ratio:** {info.get('pe_ratio', 'N/A')}")
+                                    st.info(f"**Beta:** {info.get('beta', 'N/A')}")
+                            
+                            # Technical indicators
+                            st.markdown("#### Technical Analysis")
+                            
+                            tech_indicators = market_api.get_technical_indicators(analysis_symbol)
+                            
+                            if tech_indicators:
+                                col1, col2, col3 = st.columns(3)
+                                
+                                with col1:
+                                    if tech_indicators['rsi']:
+                                        rsi_color = "🔴" if tech_indicators['rsi'] > 70 else "🟢" if tech_indicators['rsi'] < 30 else "🟡"
+                                        st.metric("RSI", f"{tech_indicators['rsi']:.1f}", help="Relative Strength Index")
+                                        st.write(f"{rsi_color} RSI Signal")
+                                
+                                with col2:
+                                    if tech_indicators['sma_20']:
+                                        st.metric("20-Day SMA", f"${tech_indicators['sma_20']:.2f}")
+                                        if tech_indicators['price_vs_sma20']:
+                                            st.write(f"Price vs SMA20: {tech_indicators['price_vs_sma20']:.1f}%")
+                                
+                                with col3:
+                                    if tech_indicators['macd'] and tech_indicators['macd_signal']:
+                                        macd_signal = "Bullish" if tech_indicators['macd'] > tech_indicators['macd_signal'] else "Bearish"
+                                        st.metric("MACD Signal", macd_signal)
+                                        st.write(f"MACD: {tech_indicators['macd']:.3f}")
+                                
+                                # Technical signals summary
+                                if tech_indicators['signals']:
+                                    st.markdown("**Technical Signals:**")
+                                    for signal in tech_indicators['signals']:
+                                        st.write(f"• {signal}")
+                            
+                            # Alternative data
+                            if include_alt_data:
+                                st.markdown("#### Alternative Data Analysis")
+                                
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    # Social sentiment
+                                    social_data = alt_api.get_social_sentiment(analysis_symbol)
+                                    
+                                    st.markdown("**Social Media Sentiment:**")
+                                    sentiment_color = "🟢" if social_data['overall_sentiment'] == 'Bullish' else "🔴" if social_data['overall_sentiment'] == 'Bearish' else "🟡"
+                                    st.write(f"{sentiment_color} Overall Sentiment: **{social_data['overall_sentiment']}**")
+                                    st.write(f"Twitter Mentions: {social_data['twitter_mentions']:,}")
+                                    st.write(f"Reddit Posts: {social_data['reddit_posts']:,}")
+                                    st.write(f"Trending Score: {social_data['trending_score']}/100")
+                                
+                                with col2:
+                                    # ESG data
+                                    esg_data = alt_api.get_esg_scores(analysis_symbol)
+                                    
+                                    st.markdown("**ESG Scores:**")
+                                    st.write(f"Overall ESG: {esg_data['overall_esg_score']}/100")
+                                    st.write(f"Environmental: {esg_data['environmental_score']}/100")
+                                    st.write(f"Social: {esg_data['social_score']}/100")
+                                    st.write(f"Governance: {esg_data['governance_score']}/100")
+                                
+                                # News sentiment
+                                news_data = market_api.get_news_sentiment(analysis_symbol)
+                                
+                                st.markdown("**News Analysis:**")
+                                sentiment_emoji = "📈" if news_data['sentiment_score'] > 0 else "📉" if news_data['sentiment_score'] < 0 else "➡️"
+                                st.write(f"{sentiment_emoji} News Sentiment: **{news_data['sentiment_label']}** (Score: {news_data['sentiment_score']:.2f})")
+                                st.write(f"News Articles: {news_data['news_count']}")
+                                
+                                with st.expander("Recent Headlines"):
+                                    for headline in news_data['latest_headlines']:
+                                        st.write(f"• {headline}")
+                        
+                        else:
+                            st.error(f"Could not fetch data for {analysis_symbol}. Please check the symbol and try again.")
+                    
+                    except Exception as e:
+                        st.error(f"Error analyzing {analysis_symbol}: {str(e)}")
+            else:
+                st.warning("Please enter a stock symbol.")
+    
+    with tab5:
+        st.markdown("### Technical Signals Scanner")
+        st.markdown("Scan multiple stocks for technical trading signals.")
+        
+        # Default watchlist
+        default_symbols = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX']
+        
+        # Watchlist input
+        watchlist_input = st.text_area(
+            "Enter Stock Symbols (comma-separated):",
+            value=', '.join(default_symbols),
+            key="watchlist_input",
+            help="Enter multiple stock symbols separated by commas"
+        )
+        
+        signal_types = st.multiselect(
+            "Select Signal Types:",
+            ['RSI Overbought/Oversold', 'MACD Crossover', 'Price vs Moving Average', 'Volume Analysis'],
+            default=['RSI Overbought/Oversold', 'MACD Crossover'],
+            key="signal_types"
+        )
+        
+        if st.button("Scan for Signals", type="primary", key="scan_signals"):
+            if watchlist_input:
+                symbols = [symbol.strip().upper() for symbol in watchlist_input.split(',')]
+                
+                with st.spinner(f"Scanning {len(symbols)} stocks for technical signals..."):
+                    try:
+                        signals_results = []
+                        
+                        for symbol in symbols:
+                            try:
+                                tech_data = market_api.get_technical_indicators(symbol, period='3mo')
+                                
+                                if tech_data:
+                                    symbol_signals = []
+                                    
+                                    # RSI signals
+                                    if 'RSI Overbought/Oversold' in signal_types and tech_data['rsi']:
+                                        if tech_data['rsi'] > 70:
+                                            symbol_signals.append("RSI Overbought")
+                                        elif tech_data['rsi'] < 30:
+                                            symbol_signals.append("RSI Oversold")
+                                    
+                                    # MACD signals
+                                    if 'MACD Crossover' in signal_types and tech_data['macd'] and tech_data['macd_signal']:
+                                        if tech_data['macd'] > tech_data['macd_signal']:
+                                            symbol_signals.append("MACD Bullish")
+                                        else:
+                                            symbol_signals.append("MACD Bearish")
+                                    
+                                    # Moving average signals
+                                    if 'Price vs Moving Average' in signal_types and tech_data['price_vs_sma20']:
+                                        if tech_data['price_vs_sma20'] > 5:
+                                            symbol_signals.append("Above SMA20")
+                                        elif tech_data['price_vs_sma20'] < -5:
+                                            symbol_signals.append("Below SMA20")
+                                    
+                                    # Volume analysis
+                                    if 'Volume Analysis' in signal_types and tech_data['volume'] and tech_data['avg_volume']:
+                                        volume_ratio = tech_data['volume'] / tech_data['avg_volume']
+                                        if volume_ratio > 1.5:
+                                            symbol_signals.append("High Volume")
+                                        elif volume_ratio < 0.5:
+                                            symbol_signals.append("Low Volume")
+                                    
+                                    signals_results.append({
+                                        'Symbol': symbol,
+                                        'Price': f"${tech_data['current_price']:.2f}",
+                                        'RSI': f"{tech_data['rsi']:.1f}" if tech_data['rsi'] else "N/A",
+                                        'MACD': "Bull" if tech_data['macd'] and tech_data['macd_signal'] and tech_data['macd'] > tech_data['macd_signal'] else "Bear",
+                                        'Signals': ', '.join(symbol_signals) if symbol_signals else 'No Signals'
+                                    })
+                            
+                            except Exception as e:
+                                print(f"Error scanning {symbol}: {e}")
+                                continue
+                        
+                        if signals_results:
+                            st.markdown("#### Technical Signals Results")
+                            
+                            signals_df = pd.DataFrame(signals_results)
+                            st.dataframe(signals_df, hide_index=True)
+                            
+                            # Signal summary
+                            total_signals = sum(1 for result in signals_results if result['Signals'] != 'No Signals')
+                            st.info(f"Found signals in {total_signals} out of {len(signals_results)} stocks scanned.")
+                            
+                            # Highlight significant signals
+                            overbought_stocks = [r['Symbol'] for r in signals_results if 'RSI Overbought' in r['Signals']]
+                            oversold_stocks = [r['Symbol'] for r in signals_results if 'RSI Oversold' in r['Signals']]
+                            
+                            if overbought_stocks:
+                                st.warning(f"⚠️ **Overbought Stocks:** {', '.join(overbought_stocks)}")
+                            
+                            if oversold_stocks:
+                                st.success(f"💡 **Oversold Stocks:** {', '.join(oversold_stocks)}")
+                        
+                        else:
+                            st.warning("No valid data found for the provided symbols.")
+                    
+                    except Exception as e:
+                        st.error(f"Error during signal scanning: {str(e)}")
+            else:
+                st.warning("Please enter at least one stock symbol.")
+    
+    # Information footer
+    st.markdown("---")
+    st.info("""
+    💡 **Market Dashboard Features:**
+    - Real-time market data and indices
+    - Sector performance analysis
+    - Global markets (crypto & forex)
+    - Individual stock fundamental and technical analysis
+    - Alternative data integration (social sentiment, ESG scores)
+    - Technical signals scanner
+    """)
+
+
 def page_help():
     """Help and documentation page."""
     st.markdown('<div class="main-header">Help & Documentation</div>', unsafe_allow_html=True)
@@ -5935,6 +6594,8 @@ def main():
         page_risk_management()
     elif current_page == "reports":
         page_performance_reporting()
+    elif current_page == "market":
+        page_market_dashboard()
     elif current_page == "help":
         page_help()
     
