@@ -1,0 +1,23 @@
+# Core data science libraries
+pandas>=1.5.0
+numpy>=1.21.0
+
+# Statistical modeling
+statsmodels>=0.13.0
+scikit-learn>=1.1.0
+
+# Deep learning
+torch>=1.12.0
+pytorch-lightning>=1.7.0
+pytorch-forecasting>=0.10.0
+
+# Web framework
+streamlit>=1.12.0
+
+# Visualization
+matplotlib>=3.5.0
+plotly>=5.10.0
+
+# Utilities
+tqdm>=4.64.0
+joblib>=1.1.0
