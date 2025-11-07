@@ -26,6 +26,7 @@ try:
     from var_model import VARModel
     from deep_learning_model import create_deep_learning_forecaster
     from run_backtest import SimpleBacktester
+    from interactive_plotting import InteractivePlotter, quick_line_plot, create_dashboard_plot
 except ImportError as e:
     st.error(f"Error importing project modules: {e}")
     st.error("Please ensure all required files are in the correct directories")
