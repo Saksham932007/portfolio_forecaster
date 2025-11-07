@@ -952,7 +952,364 @@ def page_individual_forecasting():
 def page_model_comparison():
     """Model comparison page."""
     st.markdown('<div class="main-header">Model Comparison</div>', unsafe_allow_html=True)
-    st.info("🚧 This feature will be implemented in the next phase.")
+    
+    if 'data' not in st.session_state or st.session_state.data is None:
+        st.warning("Please load data first from the Home page.")
+        return
+    
+    data = st.session_state.data
+    summary = get_data_summary(data)
+    
+    st.markdown("""
+    Compare multiple forecasting models across different tickers and time horizons 
+    to identify the best performing approaches for your portfolio.
+    """)
+    
+    # Configuration section
+    st.markdown("### Comparison Configuration")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        comparison_tickers = st.multiselect(
+            "Select Tickers for Comparison:", 
+            summary['tickers'], 
+            default=summary['tickers'][:3],
+            key="comp_tickers"
+        )
+        
+        comparison_horizons = st.multiselect(
+            "Forecast Horizons (days):",
+            [5, 10, 15, 20, 30, 50],
+            default=[10, 20, 30],
+            key="comp_horizons"
+        )
+    
+    with col2:
+        comparison_models = st.multiselect(
+            "Models to Compare:",
+            ['Naive', 'MA_5', 'MA_10', 'MA_20', 'ARIMA_111', 'ARIMA_212', 'DeepAR'],
+            default=['Naive', 'MA_10', 'ARIMA_111'],
+            key="comp_models"
+        )
+        
+        test_split = st.slider("Test Size (%):", 10, 40, 20, key="comp_test")
+    
+    if st.button("Run Model Comparison", type="primary", key="run_comparison"):
+        if not comparison_tickers or not comparison_models or not comparison_horizons:
+            st.error("Please select at least one ticker, model, and forecast horizon.")
+            return
+        
+        # Initialize results storage
+        comparison_results = []
+        progress_total = len(comparison_tickers) * len(comparison_models) * len(comparison_horizons)
+        progress_current = 0
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Run comparisons
+        for ticker in comparison_tickers:
+            # Get ticker data
+            ticker_data = get_ticker_data(data, ticker, 'close')
+            
+            for horizon in comparison_horizons:
+                # Adjust split based on horizon
+                min_train_size = max(100, horizon * 3)  # Ensure enough training data
+                if len(ticker_data) < min_train_size + horizon:
+                    continue
+                
+                split_point = int(len(ticker_data) * (1 - test_split/100))
+                train_data = ticker_data.iloc[:split_point]
+                test_data = ticker_data.iloc[split_point:split_point + horizon]
+                
+                if len(test_data) < horizon:
+                    test_data = ticker_data.iloc[-horizon:]  # Use last N points
+                    train_data = ticker_data.iloc[:-horizon]
+                
+                for model in comparison_models:
+                    progress_current += 1
+                    status_text.text(f"Testing {model} on {ticker} (horizon: {horizon})")
+                    
+                    try:
+                        # Generate forecast based on model type
+                        if model == 'Naive':
+                            forecast = naive_forecast(train_data, forecast_steps=len(test_data))
+                        elif model.startswith('MA_'):
+                            window = int(model.split('_')[1])
+                            forecast = moving_average_forecast(train_data, window=window, forecast_steps=len(test_data))
+                        elif model.startswith('ARIMA_'):
+                            order_str = model.split('_')[1]
+                            order = tuple(int(x) for x in order_str)
+                            forecast = arima_forecast(train_data, order=order, forecast_steps=len(test_data))
+                        elif model == 'DeepAR':
+                            dl_forecaster = create_deep_learning_forecaster()
+                            dl_data = pd.DataFrame({'close': ticker_data}).reset_index()
+                            dl_data['time_idx'] = range(len(dl_data))
+                            dl_data['ticker'] = ticker
+                            
+                            dl_pred, _ = dl_forecaster.fit_and_predict_deepar(dl_data, 'close', max_epochs=2)
+                            forecast = pd.Series(dl_pred[-len(test_data):], index=test_data.index)
+                        else:
+                            continue
+                        
+                        # Calculate metrics
+                        if len(forecast) == len(test_data):
+                            metrics = calculate_all_metrics(test_data.values, forecast.values)
+                            
+                            comparison_results.append({
+                                'Ticker': ticker,
+                                'Model': model,
+                                'Horizon': horizon,
+                                'RMSE': metrics['RMSE'],
+                                'MAE': metrics['MAE'], 
+                                'MAPE': metrics['MAPE'],
+                                'Data_Points': len(train_data)
+                            })
+                    
+                    except Exception as e:
+                        st.warning(f"Error with {model} on {ticker} (horizon {horizon}): {str(e)}")
+                    
+                    progress_bar.progress(progress_current / progress_total)
+        
+        status_text.text("Analysis complete!")
+        
+        if comparison_results:
+            results_df = pd.DataFrame(comparison_results)
+            
+            # Display results
+            st.markdown("### Comparison Results")
+            
+            # Create tabs for different views
+            tab1, tab2, tab3, tab4 = st.tabs(["📊 Summary Table", "🏆 Best Models", "📈 Performance Charts", "🔍 Detailed Analysis"])
+            
+            with tab1:
+                st.markdown("#### Complete Results Table")
+                
+                # Format the results table
+                display_df = results_df.copy()
+                display_df['RMSE'] = display_df['RMSE'].round(4)
+                display_df['MAE'] = display_df['MAE'].round(4)
+                display_df['MAPE'] = display_df['MAPE'].round(2)
+                
+                st.dataframe(display_df, hide_index=True)
+                
+                # Download option
+                csv = display_df.to_csv(index=False)
+                st.download_button(
+                    label="Download Results as CSV",
+                    data=csv,
+                    file_name="model_comparison_results.csv",
+                    mime="text/csv"
+                )
+            
+            with tab2:
+                st.markdown("#### Best Performing Models")
+                
+                # Best model overall
+                best_overall = results_df.loc[results_df['RMSE'].idxmin()]
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.markdown("**🥇 Overall Best**")
+                    st.success(f"**{best_overall['Model']}**")
+                    st.write(f"Ticker: {best_overall['Ticker']}")
+                    st.write(f"Horizon: {best_overall['Horizon']} days")
+                    st.write(f"RMSE: {best_overall['RMSE']:.4f}")
+                
+                # Best by ticker
+                with col2:
+                    st.markdown("**🎯 Best by Ticker**")
+                    for ticker in comparison_tickers:
+                        ticker_results = results_df[results_df['Ticker'] == ticker]
+                        if not ticker_results.empty:
+                            best_ticker = ticker_results.loc[ticker_results['RMSE'].idxmin()]
+                            st.write(f"**{ticker}**: {best_ticker['Model']} (RMSE: {best_ticker['RMSE']:.4f})")
+                
+                # Best by model
+                with col3:
+                    st.markdown("**� Best by Model**")
+                    for model in comparison_models:
+                        model_results = results_df[results_df['Model'] == model]
+                        if not model_results.empty:
+                            avg_rmse = model_results['RMSE'].mean()
+                            st.write(f"**{model}**: Avg RMSE {avg_rmse:.4f}")
+                
+                # Performance ranking
+                st.markdown("#### Model Performance Ranking")
+                
+                model_ranking = results_df.groupby('Model').agg({
+                    'RMSE': ['mean', 'std', 'min'],
+                    'MAPE': ['mean', 'std', 'min'],
+                    'Ticker': 'count'
+                }).round(4)
+                
+                model_ranking.columns = ['RMSE_Mean', 'RMSE_Std', 'RMSE_Min', 'MAPE_Mean', 'MAPE_Std', 'MAPE_Min', 'Tests']
+                model_ranking = model_ranking.sort_values('RMSE_Mean')
+                
+                st.dataframe(model_ranking)
+            
+            with tab3:
+                st.markdown("#### Performance Visualization")
+                
+                # RMSE comparison by model
+                fig1 = px.box(
+                    results_df, 
+                    x='Model', 
+                    y='RMSE',
+                    title="RMSE Distribution by Model",
+                    color='Model'
+                )
+                fig1.update_layout(height=400)
+                st.plotly_chart(fig1, width='stretch')
+                
+                # Performance by horizon
+                fig2 = px.line(
+                    results_df.groupby(['Horizon', 'Model'])['RMSE'].mean().reset_index(),
+                    x='Horizon',
+                    y='RMSE', 
+                    color='Model',
+                    title="Average RMSE by Forecast Horizon",
+                    markers=True
+                )
+                fig2.update_layout(height=400)
+                st.plotly_chart(fig2, width='stretch')
+                
+                # Heatmap of performance
+                pivot_data = results_df.pivot_table(
+                    values='RMSE', 
+                    index='Model', 
+                    columns='Ticker', 
+                    aggfunc='mean'
+                )
+                
+                if not pivot_data.empty:
+                    fig3 = px.imshow(
+                        pivot_data.values,
+                        labels=dict(x="Ticker", y="Model", color="RMSE"),
+                        x=pivot_data.columns,
+                        y=pivot_data.index,
+                        title="RMSE Heatmap (Model vs Ticker)"
+                    )
+                    fig3.update_layout(height=400)
+                    st.plotly_chart(fig3, width='stretch')
+            
+            with tab4:
+                st.markdown("#### Detailed Statistical Analysis")
+                
+                # Statistical significance tests
+                st.markdown("##### Model Performance Statistics")
+                
+                for model in comparison_models:
+                    model_data = results_df[results_df['Model'] == model]
+                    if len(model_data) > 1:
+                        st.markdown(f"**{model}:**")
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("Mean RMSE", f"{model_data['RMSE'].mean():.4f}")
+                            st.metric("Std RMSE", f"{model_data['RMSE'].std():.4f}")
+                        
+                        with col2:
+                            st.metric("Mean MAPE", f"{model_data['MAPE'].mean():.2f}%")
+                            st.metric("Std MAPE", f"{model_data['MAPE'].std():.2f}%")
+                        
+                        with col3:
+                            st.metric("Success Rate", f"{len(model_data)}/{progress_total//len(comparison_models)} tests")
+                            st.metric("Best RMSE", f"{model_data['RMSE'].min():.4f}")
+                
+                # Correlation analysis
+                st.markdown("##### Performance Correlations")
+                
+                correlation_df = results_df[['RMSE', 'MAE', 'MAPE', 'Horizon', 'Data_Points']].corr()
+                
+                fig_corr = px.imshow(
+                    correlation_df.values,
+                    labels=dict(x="Metric", y="Metric", color="Correlation"),
+                    x=correlation_df.columns,
+                    y=correlation_df.index,
+                    title="Metric Correlations",
+                    color_continuous_scale="RdBu_r"
+                )
+                st.plotly_chart(fig_corr, width='stretch')
+                
+                # Raw correlation matrix
+                st.dataframe(correlation_df.round(3))
+        
+        else:
+            st.error("No comparison results were generated. Please check your configuration.")
+    
+    # Quick comparison section
+    st.markdown("---")
+    st.markdown("### Quick Model Comparison")
+    st.markdown("Select a single ticker for rapid model comparison:")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        quick_ticker = st.selectbox("Ticker:", summary['tickers'], key="quick_comp_ticker")
+        quick_horizon = st.slider("Forecast Days:", 5, 30, 15, key="quick_comp_horizon")
+    
+    with col2:
+        quick_models = ['Naive', 'MA_10', 'ARIMA_111']
+        st.write("**Models:** Naive, MA_10, ARIMA_111")
+        quick_test_size = st.slider("Test %:", 10, 30, 15, key="quick_comp_test")
+    
+    if st.button("Quick Compare", key="quick_compare"):
+        ticker_data = get_ticker_data(data, quick_ticker, 'close')
+        
+        split_point = int(len(ticker_data) * (1 - quick_test_size/100))
+        train_data = ticker_data.iloc[:split_point]
+        test_data = ticker_data.iloc[split_point:split_point + quick_horizon]
+        
+        if len(test_data) < quick_horizon:
+            test_data = ticker_data.iloc[-quick_horizon:]
+            train_data = ticker_data.iloc[:-quick_horizon]
+        
+        quick_forecasts = {}
+        quick_metrics = {}
+        
+        with st.spinner("Running quick comparison..."):
+            # Naive
+            try:
+                naive_pred = naive_forecast(train_data, forecast_steps=len(test_data))
+                quick_forecasts['Naive'] = naive_pred
+                quick_metrics['Naive'] = calculate_all_metrics(test_data.values, naive_pred.values)
+            except Exception as e:
+                st.warning(f"Naive error: {e}")
+            
+            # MA_10
+            try:
+                ma_pred = moving_average_forecast(train_data, window=10, forecast_steps=len(test_data))
+                quick_forecasts['MA_10'] = ma_pred
+                quick_metrics['MA_10'] = calculate_all_metrics(test_data.values, ma_pred.values)
+            except Exception as e:
+                st.warning(f"MA_10 error: {e}")
+            
+            # ARIMA
+            try:
+                arima_pred = arima_forecast(train_data, order=(1,1,1), forecast_steps=len(test_data))
+                quick_forecasts['ARIMA_111'] = arima_pred
+                quick_metrics['ARIMA_111'] = calculate_all_metrics(test_data.values, arima_pred.values)
+            except Exception as e:
+                st.warning(f"ARIMA error: {e}")
+        
+        if quick_forecasts:
+            # Plot comparison
+            fig_quick = create_forecast_plot(test_data, quick_forecasts, f"{quick_ticker} Quick Comparison")
+            st.plotly_chart(fig_quick, width='stretch')
+            
+            # Quick metrics
+            quick_df = pd.DataFrame(quick_metrics).T.round(4)
+            st.dataframe(quick_df)
+            
+            # Winner
+            if not quick_df.empty:
+                winner = quick_df['RMSE'].idxmin()
+                st.success(f"🏆 Winner: **{winner}** (RMSE: {quick_df.loc[winner, 'RMSE']:.4f})")
+        else:
+            st.error("Quick comparison failed.")
 
 
 def page_multivariate_analysis():
