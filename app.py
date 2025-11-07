@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import os
 import sys
@@ -30,6 +31,8 @@ try:
     
     # Import scientific computing for optimization
     from scipy.optimize import minimize
+    from scipy.stats import jarque_bera, skew, kurtosis
+    from scipy import stats
 except ImportError as e:
     st.error(f"Error importing project modules: {e}")
     st.error("Please ensure all required files are in the correct directories")
@@ -3127,9 +3130,1030 @@ def page_portfolio_optimization():
 
 
 def page_backtesting():
-    """Backtesting page."""
-    st.markdown('<div class="main-header">Backtesting Framework</div>', unsafe_allow_html=True)
-    st.info("🚧 This feature will be implemented in the next phase.")
+    """Portfolio backtesting page."""
+    st.markdown('<div class="main-header">Portfolio Backtesting</div>', unsafe_allow_html=True)
+    
+    if 'data' not in st.session_state or st.session_state.data is None:
+        st.warning("Please load data first from the Home page.")
+        return
+    
+    data = st.session_state.data
+    summary = get_data_summary(data)
+    
+    st.markdown("""
+    Test portfolio strategies against historical data to evaluate performance, risk metrics, 
+    and trading costs before deploying real capital.
+    """)
+    
+    # Create tabs for different backtesting approaches
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Strategy Backtest", "🔄 Rebalancing Analysis", "💰 Transaction Costs", "📈 Performance Analytics"])
+    
+    with tab1:
+        st.markdown("### Strategy Backtesting")
+        st.markdown("Test different portfolio strategies against historical data.")
+        
+        # Strategy configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            bt_assets = st.multiselect(
+                "Select Portfolio Assets:",
+                summary['tickers'],
+                default=summary['tickers'][:3],
+                key="bt_assets"
+            )
+            
+            bt_strategy = st.selectbox(
+                "Portfolio Strategy:",
+                ['Equal Weight', 'Market Cap Weight', 'Risk Parity', 'Momentum', 'Mean Reversion'],
+                key="bt_strategy"
+            )
+            
+            bt_start_date = st.date_input(
+                "Backtest Start Date:",
+                value=datetime.now() - timedelta(days=365),
+                key="bt_start"
+            )
+        
+        with col2:
+            bt_end_date = st.date_input(
+                "Backtest End Date:",
+                value=datetime.now() - timedelta(days=30),
+                key="bt_end"
+            )
+            
+            bt_rebalance_freq = st.selectbox(
+                "Rebalancing Frequency:",
+                ['Monthly', 'Quarterly', 'Semi-Annually', 'Annually'],
+                key="bt_rebalance"
+            )
+            
+            bt_initial_capital = st.number_input(
+                "Initial Capital ($):",
+                min_value=1000,
+                value=100000,
+                step=1000,
+                key="bt_capital"
+            )
+        
+        # Strategy parameters
+        with st.expander("Strategy Parameters"):
+            if bt_strategy == 'Momentum':
+                momentum_lookback = st.slider(
+                    "Momentum Lookback (days):",
+                    10, 60, 20,
+                    key="momentum_lookback"
+                )
+                momentum_threshold = st.slider(
+                    "Momentum Threshold:",
+                    0.0, 0.2, 0.05,
+                    key="momentum_threshold"
+                )
+            
+            elif bt_strategy == 'Mean Reversion':
+                mr_lookback = st.slider(
+                    "Mean Reversion Lookback (days):",
+                    20, 100, 50,
+                    key="mr_lookback"
+                )
+                mr_threshold = st.slider(
+                    "Deviation Threshold:",
+                    0.5, 3.0, 2.0,
+                    key="mr_threshold"
+                )
+        
+        if len(bt_assets) >= 2:
+            if st.button("Run Backtest", type="primary", key="run_backtest"):
+                with st.spinner("Running portfolio backtest..."):
+                    try:
+                        # Get historical data for backtest period
+                        bt_data = {}
+                        for asset in bt_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            # Filter data by date range
+                            mask = (asset_prices.index >= pd.Timestamp(bt_start_date)) & (asset_prices.index <= pd.Timestamp(bt_end_date))
+                            bt_data[asset] = asset_prices[mask]
+                        
+                        bt_df = pd.DataFrame(bt_data).dropna()
+                        
+                        if len(bt_df) < 30:
+                            st.error("Insufficient data for the selected date range. Please adjust the dates.")
+                            return
+                        
+                        # Calculate returns
+                        returns_df = bt_df.pct_change().dropna()
+                        
+                        # Set rebalancing frequency
+                        freq_map = {
+                            'Monthly': '1M',
+                            'Quarterly': '3M',
+                            'Semi-Annually': '6M',
+                            'Annually': '12M'
+                        }
+                        rebalance_freq = freq_map[bt_rebalance_freq]
+                        
+                        # Generate rebalancing dates
+                        rebalance_dates = pd.date_range(
+                            start=bt_df.index[0],
+                            end=bt_df.index[-1],
+                            freq=rebalance_freq
+                        )
+                        
+                        # Initialize portfolio
+                        portfolio_value = pd.Series(index=bt_df.index, dtype=float)
+                        portfolio_weights = pd.DataFrame(index=rebalance_dates, columns=bt_assets)
+                        
+                        current_capital = bt_initial_capital
+                        
+                        # Backtesting loop
+                        for i, rebal_date in enumerate(rebalance_dates):
+                            # Find closest date in data
+                            closest_date = bt_df.index[bt_df.index >= rebal_date][0] if any(bt_df.index >= rebal_date) else bt_df.index[-1]
+                            
+                            # Calculate weights based on strategy
+                            if bt_strategy == 'Equal Weight':
+                                weights = np.array([1/len(bt_assets)] * len(bt_assets))
+                            
+                            elif bt_strategy == 'Market Cap Weight':
+                                # Approximate market cap by price
+                                prices = bt_df.loc[closest_date]
+                                weights = prices / prices.sum()
+                                weights = weights.values
+                            
+                            elif bt_strategy == 'Risk Parity':
+                                # Use inverse volatility
+                                if i == 0:
+                                    lookback_data = returns_df.loc[:closest_date].tail(60)
+                                else:
+                                    prev_rebal = rebalance_dates[i-1]
+                                    lookback_data = returns_df.loc[prev_rebal:closest_date]
+                                
+                                if len(lookback_data) > 5:
+                                    volatilities = lookback_data.std()
+                                    inv_vol = 1 / volatilities
+                                    weights = (inv_vol / inv_vol.sum()).values
+                                else:
+                                    weights = np.array([1/len(bt_assets)] * len(bt_assets))
+                            
+                            elif bt_strategy == 'Momentum':
+                                # Calculate momentum scores
+                                if i == 0:
+                                    lookback_data = returns_df.loc[:closest_date].tail(momentum_lookback)
+                                else:
+                                    prev_rebal = rebalance_dates[i-1]
+                                    lookback_data = returns_df.loc[prev_rebal:closest_date].tail(momentum_lookback)
+                                
+                                if len(lookback_data) > 5:
+                                    momentum_scores = lookback_data.mean()
+                                    # Only invest in assets above threshold
+                                    positive_momentum = momentum_scores > momentum_threshold
+                                    if positive_momentum.any():
+                                        weights = np.zeros(len(bt_assets))
+                                        weights[positive_momentum] = 1 / positive_momentum.sum()
+                                    else:
+                                        weights = np.array([1/len(bt_assets)] * len(bt_assets))
+                                else:
+                                    weights = np.array([1/len(bt_assets)] * len(bt_assets))
+                            
+                            elif bt_strategy == 'Mean Reversion':
+                                # Calculate mean reversion signals
+                                if i == 0:
+                                    lookback_data = returns_df.loc[:closest_date].tail(mr_lookback)
+                                else:
+                                    prev_rebal = rebalance_dates[i-1]
+                                    lookback_data = returns_df.loc[prev_rebal:closest_date].tail(mr_lookback)
+                                
+                                if len(lookback_data) > 5:
+                                    mean_returns = lookback_data.mean()
+                                    std_returns = lookback_data.std()
+                                    recent_returns = lookback_data.tail(5).mean()
+                                    
+                                    # Z-scores for mean reversion
+                                    z_scores = (recent_returns - mean_returns) / std_returns
+                                    
+                                    # Invest more in assets that have deviated negatively
+                                    mr_signals = -z_scores  # Negative z-score means buy signal
+                                    mr_signals = np.clip(mr_signals, -mr_threshold, mr_threshold)
+                                    
+                                    # Normalize to weights
+                                    weights = (mr_signals - mr_signals.min()) / (mr_signals.max() - mr_signals.min())
+                                    weights = weights / weights.sum()
+                                    weights = weights.values
+                                else:
+                                    weights = np.array([1/len(bt_assets)] * len(bt_assets))
+                            
+                            # Store weights
+                            portfolio_weights.loc[closest_date] = weights
+                            
+                            # Calculate portfolio value from this rebalancing date
+                            if i < len(rebalance_dates) - 1:
+                                next_rebal = rebalance_dates[i + 1]
+                                period_data = bt_df.loc[closest_date:next_rebal]
+                                period_returns = period_data.pct_change().dropna()
+                            else:
+                                period_data = bt_df.loc[closest_date:]
+                                period_returns = period_data.pct_change().dropna()
+                            
+                            # Calculate portfolio returns for this period
+                            for date in period_data.index:
+                                if date == closest_date:
+                                    portfolio_value[date] = current_capital
+                                else:
+                                    if date in period_returns.index:
+                                        period_return = np.dot(weights, period_returns.loc[date])
+                                        current_capital *= (1 + period_return)
+                                        portfolio_value[date] = current_capital
+                        
+                        # Calculate benchmark (equal weight buy and hold)
+                        equal_weights = np.array([1/len(bt_assets)] * len(bt_assets))
+                        benchmark_returns = (returns_df * equal_weights).sum(axis=1)
+                        benchmark_value = (1 + benchmark_returns).cumprod() * bt_initial_capital
+                        
+                        # Calculate performance metrics
+                        portfolio_returns = portfolio_value.pct_change().dropna()
+                        
+                        # Annualized metrics
+                        trading_days = 252
+                        total_return = (portfolio_value.iloc[-1] / portfolio_value.iloc[0]) - 1
+                        annualized_return = (1 + total_return) ** (trading_days / len(portfolio_value)) - 1
+                        annualized_vol = portfolio_returns.std() * np.sqrt(trading_days)
+                        sharpe_ratio = annualized_return / annualized_vol if annualized_vol > 0 else 0
+                        
+                        # Maximum drawdown
+                        cumulative = portfolio_value / portfolio_value.iloc[0]
+                        running_max = cumulative.cummax()
+                        drawdown = (cumulative - running_max) / running_max
+                        max_drawdown = drawdown.min()
+                        
+                        # Benchmark metrics
+                        bench_total_return = (benchmark_value.iloc[-1] / benchmark_value.iloc[0]) - 1
+                        bench_annualized_return = (1 + bench_total_return) ** (trading_days / len(benchmark_value)) - 1
+                        bench_returns = benchmark_value.pct_change().dropna()
+                        bench_vol = bench_returns.std() * np.sqrt(trading_days)
+                        bench_sharpe = bench_annualized_return / bench_vol if bench_vol > 0 else 0
+                        
+                        # Display results
+                        st.markdown("#### Backtest Results")
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Total Return", f"{total_return:.2%}")
+                        with col2:
+                            st.metric("Annualized Return", f"{annualized_return:.2%}")
+                        with col3:
+                            st.metric("Volatility", f"{annualized_vol:.2%}")
+                        with col4:
+                            st.metric("Sharpe Ratio", f"{sharpe_ratio:.3f}")
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Max Drawdown", f"{max_drawdown:.2%}")
+                        with col2:
+                            st.metric("Final Value", f"${portfolio_value.iloc[-1]:,.0f}")
+                        with col3:
+                            st.metric("Total Trades", f"{len(rebalance_dates)}")
+                        with col4:
+                            alpha = annualized_return - bench_annualized_return
+                            st.metric("Alpha vs Benchmark", f"{alpha:.2%}")
+                        
+                        # Performance chart
+                        st.markdown("#### Portfolio Performance")
+                        
+                        fig_perf = go.Figure()
+                        
+                        fig_perf.add_trace(go.Scatter(
+                            x=portfolio_value.index,
+                            y=portfolio_value.values,
+                            mode='lines',
+                            name=f'{bt_strategy} Portfolio',
+                            line=dict(color='blue', width=2)
+                        ))
+                        
+                        fig_perf.add_trace(go.Scatter(
+                            x=benchmark_value.index,
+                            y=benchmark_value.values,
+                            mode='lines',
+                            name='Equal Weight Benchmark',
+                            line=dict(color='red', width=2, dash='dash')
+                        ))
+                        
+                        # Add rebalancing points
+                        rebal_values = [portfolio_value[portfolio_value.index >= date].iloc[0] if any(portfolio_value.index >= date) else portfolio_value.iloc[-1] for date in rebalance_dates]
+                        
+                        fig_perf.add_trace(go.Scatter(
+                            x=rebalance_dates,
+                            y=rebal_values,
+                            mode='markers',
+                            name='Rebalancing Points',
+                            marker=dict(color='green', size=8, symbol='diamond')
+                        ))
+                        
+                        fig_perf.update_layout(
+                            title="Portfolio Value Over Time",
+                            xaxis_title="Date",
+                            yaxis_title="Portfolio Value ($)",
+                            height=500,
+                            hovermode='x unified'
+                        )
+                        
+                        st.plotly_chart(fig_perf, width='stretch')
+                        
+                        # Portfolio weights over time
+                        st.markdown("#### Portfolio Weights Over Time")
+                        
+                        # Interpolate weights for visualization
+                        weights_filled = portfolio_weights.reindex(bt_df.index).fillna(method='ffill')
+                        
+                        fig_weights = go.Figure()
+                        
+                        colors = px.colors.qualitative.Set3
+                        for i, asset in enumerate(bt_assets):
+                            fig_weights.add_trace(go.Scatter(
+                                x=weights_filled.index,
+                                y=weights_filled[asset] * 100,
+                                mode='lines',
+                                name=asset,
+                                fill='tonexty' if i > 0 else 'tozeroy',
+                                line=dict(color=colors[i % len(colors)])
+                            ))
+                        
+                        fig_weights.update_layout(
+                            title="Portfolio Allocation Over Time",
+                            xaxis_title="Date",
+                            yaxis_title="Weight (%)",
+                            height=400,
+                            hovermode='x unified'
+                        )
+                        
+                        st.plotly_chart(fig_weights, width='stretch')
+                        
+                        # Performance comparison table
+                        st.markdown("#### Strategy vs Benchmark Comparison")
+                        
+                        comparison_df = pd.DataFrame({
+                            'Metric': ['Total Return', 'Annualized Return', 'Volatility', 'Sharpe Ratio', 'Max Drawdown'],
+                            'Strategy': [
+                                f"{total_return:.2%}",
+                                f"{annualized_return:.2%}",
+                                f"{annualized_vol:.2%}",
+                                f"{sharpe_ratio:.3f}",
+                                f"{max_drawdown:.2%}"
+                            ],
+                            'Benchmark': [
+                                f"{bench_total_return:.2%}",
+                                f"{bench_annualized_return:.2%}",
+                                f"{bench_vol:.2%}",
+                                f"{bench_sharpe:.3f}",
+                                f"{(benchmark_value / benchmark_value.cummax() - 1).min():.2%}"
+                            ]
+                        })
+                        
+                        st.dataframe(comparison_df, hide_index=True)
+                        
+                        if sharpe_ratio > bench_sharpe:
+                            st.success(f"🎯 Strategy outperformed benchmark by {((sharpe_ratio/bench_sharpe - 1) * 100):.1f}% in risk-adjusted returns!")
+                        else:
+                            st.info("📊 Benchmark showed better risk-adjusted performance")
+                    
+                    except Exception as e:
+                        st.error(f"Backtesting failed: {str(e)}")
+                        st.info("This might be due to insufficient data or calculation errors.")
+        else:
+            st.info("Please select at least 2 assets for backtesting.")
+    
+    with tab2:
+        st.markdown("### Rebalancing Analysis")
+        st.markdown("Analyze the impact of different rebalancing frequencies on portfolio performance.")
+        
+        # Rebalancing comparison configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            rebal_assets = st.multiselect(
+                "Select Assets:",
+                summary['tickers'],
+                default=summary['tickers'][:3],
+                key="rebal_assets"
+            )
+        
+        with col2:
+            rebal_period = st.selectbox(
+                "Analysis Period:",
+                ['1 Year', '2 Years', '3 Years'],
+                key="rebal_period"
+            )
+        
+        if len(rebal_assets) >= 2:
+            if st.button("Analyze Rebalancing Impact", key="analyze_rebalancing"):
+                with st.spinner("Analyzing rebalancing frequencies..."):
+                    try:
+                        # Set analysis period
+                        period_map = {'1 Year': 365, '2 Years': 730, '3 Years': 1095}
+                        days_back = period_map[rebal_period]
+                        
+                        start_date = datetime.now() - timedelta(days=days_back)
+                        
+                        # Get data
+                        rebal_data = {}
+                        for asset in rebal_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            mask = asset_prices.index >= pd.Timestamp(start_date)
+                            rebal_data[asset] = asset_prices[mask]
+                        
+                        rebal_df = pd.DataFrame(rebal_data).dropna()
+                        returns_df = rebal_df.pct_change().dropna()
+                        
+                        # Test different rebalancing frequencies
+                        frequencies = ['1M', '3M', '6M', '12M', 'None']  # None = buy and hold
+                        rebal_results = {}
+                        
+                        for freq in frequencies:
+                            if freq == 'None':
+                                # Buy and hold strategy
+                                equal_weights = np.array([1/len(rebal_assets)] * len(rebal_assets))
+                                portfolio_returns = (returns_df * equal_weights).sum(axis=1)
+                            else:
+                                # Rebalancing strategy
+                                rebal_dates = pd.date_range(
+                                    start=rebal_df.index[0],
+                                    end=rebal_df.index[-1],
+                                    freq=freq
+                                )
+                                
+                                portfolio_returns = pd.Series(index=returns_df.index, dtype=float)
+                                
+                                for i, rebal_date in enumerate(rebal_dates):
+                                    closest_date = rebal_df.index[rebal_df.index >= rebal_date][0] if any(rebal_df.index >= rebal_date) else rebal_df.index[-1]
+                                    
+                                    if i < len(rebal_dates) - 1:
+                                        next_rebal = rebal_dates[i + 1]
+                                        period_returns = returns_df.loc[closest_date:next_rebal]
+                                    else:
+                                        period_returns = returns_df.loc[closest_date:]
+                                    
+                                    # Equal weight rebalancing
+                                    equal_weights = np.array([1/len(rebal_assets)] * len(rebal_assets))
+                                    period_portfolio_returns = (period_returns * equal_weights).sum(axis=1)
+                                    portfolio_returns.loc[period_portfolio_returns.index] = period_portfolio_returns
+                                
+                                portfolio_returns = portfolio_returns.dropna()
+                            
+                            # Calculate metrics
+                            total_return = (1 + portfolio_returns).cumprod().iloc[-1] - 1
+                            annualized_return = (1 + total_return) ** (252 / len(portfolio_returns)) - 1
+                            volatility = portfolio_returns.std() * np.sqrt(252)
+                            sharpe = annualized_return / volatility if volatility > 0 else 0
+                            
+                            # Transaction costs (approximate)
+                            num_rebalances = len(pd.date_range(start=rebal_df.index[0], end=rebal_df.index[-1], freq=freq)) if freq != 'None' else 0
+                            transaction_cost = num_rebalances * 0.001 * len(rebal_assets)  # 0.1% per asset per rebalance
+                            
+                            rebal_results[freq] = {
+                                'Total Return': total_return,
+                                'Annualized Return': annualized_return,
+                                'Volatility': volatility,
+                                'Sharpe Ratio': sharpe,
+                                'Rebalances': num_rebalances,
+                                'Transaction Cost': transaction_cost,
+                                'Net Return': total_return - transaction_cost
+                            }
+                        
+                        # Display results
+                        st.markdown("#### Rebalancing Frequency Comparison")
+                        
+                        freq_labels = {'1M': 'Monthly', '3M': 'Quarterly', '6M': 'Semi-Annual', '12M': 'Annual', 'None': 'Buy & Hold'}
+                        
+                        results_df = pd.DataFrame(rebal_results).T
+                        results_df.index = [freq_labels[freq] for freq in results_df.index]
+                        
+                        # Format the dataframe for display
+                        display_df = pd.DataFrame({
+                            'Frequency': results_df.index,
+                            'Total Return': [f"{r:.2%}" for r in results_df['Total Return']],
+                            'Annualized Return': [f"{r:.2%}" for r in results_df['Annualized Return']],
+                            'Volatility': [f"{r:.2%}" for r in results_df['Volatility']],
+                            'Sharpe Ratio': [f"{r:.3f}" for r in results_df['Sharpe Ratio']],
+                            'Rebalances': [int(r) for r in results_df['Rebalances']],
+                            'Transaction Cost': [f"{r:.2%}" for r in results_df['Transaction Cost']],
+                            'Net Return': [f"{r:.2%}" for r in results_df['Net Return']]
+                        })
+                        
+                        st.dataframe(display_df, hide_index=True)
+                        
+                        # Best frequency
+                        best_freq = results_df['Sharpe Ratio'].idxmax()
+                        best_sharpe = results_df.loc[best_freq, 'Sharpe Ratio']
+                        
+                        st.success(f"🏆 Best Rebalancing Frequency: **{best_freq}** (Sharpe: {best_sharpe:.3f})")
+                        
+                        # Visualization
+                        fig_rebal = go.Figure()
+                        
+                        for freq in results_df.index:
+                            fig_rebal.add_trace(go.Bar(
+                                name=freq,
+                                x=[freq],
+                                y=[results_df.loc[freq, 'Sharpe Ratio']],
+                                text=f"{results_df.loc[freq, 'Sharpe Ratio']:.3f}",
+                                textposition='auto'
+                            ))
+                        
+                        fig_rebal.update_layout(
+                            title="Sharpe Ratio by Rebalancing Frequency",
+                            xaxis_title="Rebalancing Frequency",
+                            yaxis_title="Sharpe Ratio",
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_rebal, width='stretch')
+                    
+                    except Exception as e:
+                        st.error(f"Rebalancing analysis failed: {str(e)}")
+        else:
+            st.info("Please select at least 2 assets for rebalancing analysis.")
+    
+    with tab3:
+        st.markdown("### Transaction Cost Analysis")
+        st.markdown("Evaluate the impact of trading costs on portfolio performance.")
+        
+        # Transaction cost configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            tc_spread = st.slider(
+                "Bid-Ask Spread (%):",
+                0.0, 1.0, 0.1,
+                step=0.05,
+                key="tc_spread",
+                help="Typical bid-ask spread cost"
+            )
+            
+            tc_commission = st.number_input(
+                "Commission per Trade ($):",
+                min_value=0.0,
+                value=1.0,
+                step=0.5,
+                key="tc_commission"
+            )
+        
+        with col2:
+            tc_impact = st.slider(
+                "Market Impact (%):",
+                0.0, 0.5, 0.05,
+                step=0.01,
+                key="tc_impact",
+                help="Price impact from trading"
+            )
+            
+            tc_slippage = st.slider(
+                "Slippage (%):",
+                0.0, 0.2, 0.02,
+                step=0.01,
+                key="tc_slippage",
+                help="Execution slippage"
+            )
+        
+        # Portfolio for cost analysis
+        tc_assets = st.multiselect(
+            "Select Assets for Cost Analysis:",
+            summary['tickers'],
+            default=summary['tickers'][:3],
+            key="tc_assets"
+        )
+        
+        if len(tc_assets) >= 2:
+            if st.button("Analyze Transaction Costs", key="analyze_costs"):
+                with st.spinner("Calculating transaction cost impact..."):
+                    try:
+                        # Get portfolio data
+                        tc_data = {}
+                        for asset in tc_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            tc_data[asset] = asset_prices.tail(252)  # 1 year of data
+                        
+                        tc_df = pd.DataFrame(tc_data).dropna()
+                        returns_df = tc_df.pct_change().dropna()
+                        
+                        # Calculate total transaction cost
+                        total_cost_pct = tc_spread + tc_impact + tc_slippage
+                        
+                        # Simulate different rebalancing frequencies with costs
+                        frequencies = ['1M', '3M', '6M', '12M']
+                        cost_results = {}
+                        
+                        for freq in frequencies:
+                            # Calculate rebalancing dates
+                            rebal_dates = pd.date_range(
+                                start=tc_df.index[0],
+                                end=tc_df.index[-1],
+                                freq=freq
+                            )
+                            
+                            # Calculate costs
+                            num_rebalances = len(rebal_dates)
+                            trades_per_rebalance = len(tc_assets) * 2  # Buy and sell
+                            total_trades = num_rebalances * trades_per_rebalance
+                            
+                            # Cost breakdown
+                            spread_cost = num_rebalances * tc_spread / 100 * len(tc_assets)
+                            commission_cost = total_trades * tc_commission / 100000  # As percentage of $100k portfolio
+                            impact_cost = num_rebalances * tc_impact / 100 * len(tc_assets)
+                            slippage_cost = num_rebalances * tc_slippage / 100 * len(tc_assets)
+                            
+                            total_cost = spread_cost + commission_cost + impact_cost + slippage_cost
+                            
+                            # Portfolio performance without costs
+                            equal_weights = np.array([1/len(tc_assets)] * len(tc_assets))
+                            portfolio_returns = (returns_df * equal_weights).sum(axis=1)
+                            gross_return = (1 + portfolio_returns).cumprod().iloc[-1] - 1
+                            
+                            # Net return after costs
+                            net_return = gross_return - total_cost
+                            
+                            cost_results[freq] = {
+                                'Gross Return': gross_return,
+                                'Total Cost': total_cost,
+                                'Net Return': net_return,
+                                'Spread Cost': spread_cost,
+                                'Commission Cost': commission_cost,
+                                'Impact Cost': impact_cost,
+                                'Slippage Cost': slippage_cost,
+                                'Rebalances': num_rebalances,
+                                'Total Trades': total_trades
+                            }
+                        
+                        # Display results
+                        st.markdown("#### Transaction Cost Impact by Frequency")
+                        
+                        freq_labels = {'1M': 'Monthly', '3M': 'Quarterly', '6M': 'Semi-Annual', '12M': 'Annual'}
+                        
+                        cost_df = pd.DataFrame(cost_results).T
+                        cost_df.index = [freq_labels[freq] for freq in cost_df.index]
+                        
+                        display_cost_df = pd.DataFrame({
+                            'Frequency': cost_df.index,
+                            'Gross Return': [f"{r:.2%}" for r in cost_df['Gross Return']],
+                            'Total Cost': [f"{r:.2%}" for r in cost_df['Total Cost']],
+                            'Net Return': [f"{r:.2%}" for r in cost_df['Net Return']],
+                            'Rebalances': [int(r) for r in cost_df['Rebalances']],
+                            'Total Trades': [int(r) for r in cost_df['Total Trades']]
+                        })
+                        
+                        st.dataframe(display_cost_df, hide_index=True)
+                        
+                        # Cost breakdown chart
+                        st.markdown("#### Cost Breakdown by Component")
+                        
+                        cost_components = ['Spread Cost', 'Commission Cost', 'Impact Cost', 'Slippage Cost']
+                        
+                        fig_cost = go.Figure()
+                        
+                        for freq in cost_df.index:
+                            costs = [cost_df.loc[freq, comp] * 100 for comp in cost_components]  # Convert to percentage
+                            
+                            fig_cost.add_trace(go.Bar(
+                                name=freq,
+                                x=cost_components,
+                                y=costs,
+                                text=[f"{c:.2f}%" for c in costs],
+                                textposition='auto'
+                            ))
+                        
+                        fig_cost.update_layout(
+                            title="Transaction Cost Breakdown by Frequency",
+                            xaxis_title="Cost Component",
+                            yaxis_title="Cost (%)",
+                            barmode='group',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_cost, width='stretch')
+                        
+                        # Net return comparison
+                        st.markdown("#### Net Return After Costs")
+                        
+                        fig_net = go.Figure()
+                        
+                        frequencies_list = list(cost_df.index)
+                        net_returns = [cost_df.loc[freq, 'Net Return'] * 100 for freq in frequencies_list]
+                        
+                        fig_net.add_trace(go.Bar(
+                            x=frequencies_list,
+                            y=net_returns,
+                            text=[f"{nr:.2f}%" for nr in net_returns],
+                            textposition='auto',
+                            marker_color='lightblue'
+                        ))
+                        
+                        fig_net.update_layout(
+                            title="Net Returns by Rebalancing Frequency",
+                            xaxis_title="Rebalancing Frequency",
+                            yaxis_title="Net Return (%)",
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_net, width='stretch')
+                        
+                        # Best frequency after costs
+                        best_net_freq = cost_df['Net Return'].idxmax()
+                        best_net_return = cost_df.loc[best_net_freq, 'Net Return']
+                        
+                        st.success(f"💰 Best Frequency After Costs: **{best_net_freq}** (Net Return: {best_net_return:.2%})")
+                        
+                        # Cost insights
+                        total_cost_range = cost_df['Total Cost'].max() - cost_df['Total Cost'].min()
+                        if total_cost_range > 0.05:  # 5%
+                            st.warning("⚠️ High variation in costs across frequencies. Consider less frequent rebalancing.")
+                        else:
+                            st.info("ℹ️ Transaction costs are relatively stable across frequencies.")
+                    
+                    except Exception as e:
+                        st.error(f"Transaction cost analysis failed: {str(e)}")
+        else:
+            st.info("Please select at least 2 assets for transaction cost analysis.")
+    
+    with tab4:
+        st.markdown("### Performance Analytics")
+        st.markdown("Advanced performance metrics and risk analysis for backtested portfolios.")
+        
+        # Performance analytics configuration
+        pa_strategy = st.selectbox(
+            "Select Strategy for Detailed Analysis:",
+            ['Equal Weight', 'Risk Parity', 'Momentum', 'Mean Reversion'],
+            key="pa_strategy"
+        )
+        
+        pa_assets = st.multiselect(
+            "Select Assets:",
+            summary['tickers'],
+            default=summary['tickers'][:4],
+            key="pa_assets"
+        )
+        
+        if len(pa_assets) >= 2:
+            if st.button("Generate Performance Analytics", key="generate_analytics"):
+                with st.spinner("Generating detailed performance analytics..."):
+                    try:
+                        # Get data for analysis (2 years)
+                        start_date = datetime.now() - timedelta(days=730)
+                        
+                        pa_data = {}
+                        for asset in pa_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            mask = asset_prices.index >= pd.Timestamp(start_date)
+                            pa_data[asset] = asset_prices[mask]
+                        
+                        pa_df = pd.DataFrame(pa_data).dropna()
+                        returns_df = pa_df.pct_change().dropna()
+                        
+                        # Simple strategy implementation for analytics
+                        if pa_strategy == 'Equal Weight':
+                            weights = np.array([1/len(pa_assets)] * len(pa_assets))
+                        elif pa_strategy == 'Risk Parity':
+                            volatilities = returns_df.std()
+                            inv_vol = 1 / volatilities
+                            weights = (inv_vol / inv_vol.sum()).values
+                        else:
+                            weights = np.array([1/len(pa_assets)] * len(pa_assets))  # Simplified for demo
+                        
+                        portfolio_returns = (returns_df * weights).sum(axis=1)
+                        
+                        # Advanced performance metrics
+                        st.markdown("#### Advanced Performance Metrics")
+                        
+                        # Calculate comprehensive metrics
+                        annual_return = portfolio_returns.mean() * 252
+                        annual_vol = portfolio_returns.std() * np.sqrt(252)
+                        sharpe_ratio = annual_return / annual_vol if annual_vol > 0 else 0
+                        
+                        # Sortino ratio (downside deviation)
+                        downside_returns = portfolio_returns[portfolio_returns < 0]
+                        downside_std = downside_returns.std() * np.sqrt(252) if len(downside_returns) > 0 else 0
+                        sortino_ratio = annual_return / downside_std if downside_std > 0 else 0
+                        
+                        # Calmar ratio (return / max drawdown)
+                        cumulative = (1 + portfolio_returns).cumprod()
+                        running_max = cumulative.cummax()
+                        drawdown = (cumulative - running_max) / running_max
+                        max_drawdown = abs(drawdown.min())
+                        calmar_ratio = annual_return / max_drawdown if max_drawdown > 0 else 0
+                        
+                        # Value at Risk (VaR)
+                        var_95 = np.percentile(portfolio_returns, 5)
+                        var_99 = np.percentile(portfolio_returns, 1)
+                        
+                        # Expected Shortfall (Conditional VaR)
+                        es_95 = portfolio_returns[portfolio_returns <= var_95].mean()
+                        es_99 = portfolio_returns[portfolio_returns <= var_99].mean()
+                        
+                        # Display metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Sharpe Ratio", f"{sharpe_ratio:.3f}")
+                            st.metric("Calmar Ratio", f"{calmar_ratio:.3f}")
+                        
+                        with col2:
+                            st.metric("Sortino Ratio", f"{sortino_ratio:.3f}")
+                            st.metric("Max Drawdown", f"{max_drawdown:.2%}")
+                        
+                        with col3:
+                            st.metric("VaR (95%)", f"{var_95:.2%}")
+                            st.metric("VaR (99%)", f"{var_99:.2%}")
+                        
+                        with col4:
+                            st.metric("ES (95%)", f"{es_95:.2%}")
+                            st.metric("ES (99%)", f"{es_99:.2%}")
+                        
+                        # Rolling metrics analysis
+                        st.markdown("#### Rolling Performance Metrics")
+                        
+                        # Calculate rolling Sharpe ratio
+                        rolling_window = 60  # 60 days
+                        rolling_returns = portfolio_returns.rolling(window=rolling_window).mean() * 252
+                        rolling_vol = portfolio_returns.rolling(window=rolling_window).std() * np.sqrt(252)
+                        rolling_sharpe = rolling_returns / rolling_vol
+                        
+                        fig_rolling = make_subplots(
+                            rows=2, cols=2,
+                            subplot_titles=('Rolling Returns', 'Rolling Volatility', 'Rolling Sharpe Ratio', 'Drawdown'),
+                            specs=[[{"secondary_y": False}, {"secondary_y": False}],
+                                   [{"secondary_y": False}, {"secondary_y": False}]]
+                        )
+                        
+                        # Rolling returns
+                        fig_rolling.add_trace(
+                            go.Scatter(x=rolling_returns.index, y=rolling_returns * 100, name="Rolling Return (%)", line=dict(color='blue')),
+                            row=1, col=1
+                        )
+                        
+                        # Rolling volatility
+                        fig_rolling.add_trace(
+                            go.Scatter(x=rolling_vol.index, y=rolling_vol * 100, name="Rolling Volatility (%)", line=dict(color='red')),
+                            row=1, col=2
+                        )
+                        
+                        # Rolling Sharpe
+                        fig_rolling.add_trace(
+                            go.Scatter(x=rolling_sharpe.index, y=rolling_sharpe, name="Rolling Sharpe", line=dict(color='green')),
+                            row=2, col=1
+                        )
+                        
+                        # Drawdown
+                        fig_rolling.add_trace(
+                            go.Scatter(x=drawdown.index, y=drawdown * 100, name="Drawdown (%)", fill='tozeroy', line=dict(color='orange')),
+                            row=2, col=2
+                        )
+                        
+                        fig_rolling.update_layout(height=600, showlegend=False, title_text="Rolling Performance Analysis")
+                        st.plotly_chart(fig_rolling, width='stretch')
+                        
+                        # Returns distribution analysis
+                        st.markdown("#### Returns Distribution Analysis")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Histogram of returns
+                            fig_hist = px.histogram(
+                                x=portfolio_returns * 100,
+                                nbins=50,
+                                title="Distribution of Daily Returns",
+                                labels={'x': 'Daily Return (%)', 'y': 'Frequency'}
+                            )
+                            
+                            # Add normal distribution overlay
+                            x_norm = np.linspace(portfolio_returns.min(), portfolio_returns.max(), 100) * 100
+                            y_norm = ((1 / (np.sqrt(2 * np.pi) * portfolio_returns.std() * 100)) * 
+                                     np.exp(-0.5 * ((x_norm - portfolio_returns.mean() * 100) / (portfolio_returns.std() * 100)) ** 2))
+                            
+                            # Scale to match histogram
+                            y_norm = y_norm * len(portfolio_returns) * (portfolio_returns.max() - portfolio_returns.min()) * 100 / 50
+                            
+                            fig_hist.add_trace(
+                                go.Scatter(x=x_norm, y=y_norm, mode='lines', name='Normal Distribution', line=dict(color='red', dash='dash'))
+                            )
+                            
+                            st.plotly_chart(fig_hist, width='stretch')
+                        
+                        with col2:
+                            # Q-Q plot approximation (scatter plot)
+                            from scipy import stats
+                            
+                            sorted_returns = np.sort(portfolio_returns)
+                            theoretical_quantiles = stats.norm.ppf(np.linspace(0.01, 0.99, len(sorted_returns)))
+                            
+                            fig_qq = go.Figure()
+                            fig_qq.add_trace(go.Scatter(
+                                x=theoretical_quantiles,
+                                y=sorted_returns,
+                                mode='markers',
+                                name='Sample Quantiles',
+                                marker=dict(color='blue', size=4)
+                            ))
+                            
+                            # Add 45-degree line
+                            line_min = min(theoretical_quantiles.min(), sorted_returns.min())
+                            line_max = max(theoretical_quantiles.max(), sorted_returns.max())
+                            fig_qq.add_trace(go.Scatter(
+                                x=[line_min, line_max],
+                                y=[line_min, line_max],
+                                mode='lines',
+                                name='Normal Line',
+                                line=dict(color='red', dash='dash')
+                            ))
+                            
+                            fig_qq.update_layout(
+                                title="Q-Q Plot vs Normal Distribution",
+                                xaxis_title="Theoretical Quantiles",
+                                yaxis_title="Sample Quantiles"
+                            )
+                            
+                            st.plotly_chart(fig_qq, width='stretch')
+                        
+                        # Statistical tests
+                        st.markdown("#### Statistical Tests")
+                        
+                        # Normality test (Jarque-Bera)
+                        from scipy.stats import jarque_bera, skew, kurtosis
+                        
+                        jb_stat, jb_pvalue = jarque_bera(portfolio_returns)
+                        returns_skew = skew(portfolio_returns)
+                        returns_kurtosis = kurtosis(portfolio_returns)
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Skewness", f"{returns_skew:.3f}")
+                        with col2:
+                            st.metric("Kurtosis", f"{returns_kurtosis:.3f}")
+                        with col3:
+                            st.metric("JB Statistic", f"{jb_stat:.2f}")
+                        with col4:
+                            normality_status = "Normal" if jb_pvalue > 0.05 else "Non-Normal"
+                            st.metric("Normality", normality_status)
+                        
+                        if jb_pvalue < 0.05:
+                            st.warning("⚠️ Returns are not normally distributed. Consider using robust risk measures.")
+                        else:
+                            st.success("✅ Returns appear to be normally distributed.")
+                        
+                        # Performance summary
+                        st.markdown("#### Performance Summary")
+                        
+                        if sharpe_ratio > 1.0:
+                            performance_grade = "Excellent"
+                            grade_color = "🟢"
+                        elif sharpe_ratio > 0.5:
+                            performance_grade = "Good"
+                            grade_color = "🟡"
+                        else:
+                            performance_grade = "Needs Improvement"
+                            grade_color = "🔴"
+                        
+                        st.info(f"""
+                        **Strategy Performance Grade:** {grade_color} {performance_grade}
+                        
+                        **Key Insights:**
+                        - Risk-adjusted return (Sharpe): {sharpe_ratio:.3f}
+                        - Downside protection (Sortino): {sortino_ratio:.3f}
+                        - Drawdown management (Calmar): {calmar_ratio:.3f}
+                        - Tail risk (VaR 95%): {var_95:.2%}
+                        """)
+                    
+                    except Exception as e:
+                        st.error(f"Performance analytics failed: {str(e)}")
+        else:
+            st.info("Please select at least 2 assets for performance analytics.")
+    
+    # Educational content
+    st.markdown("---")
+    st.markdown("### 📚 Backtesting Best Practices")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        **Key Considerations:**
+        - **Survivorship Bias:** Use complete historical data
+        - **Look-ahead Bias:** Only use past information
+        - **Transaction Costs:** Include realistic trading costs
+        - **Market Regime Changes:** Test across different periods
+        """)
+    
+    with col2:
+        st.markdown("""
+        **Performance Metrics:**
+        - **Sharpe Ratio:** Risk-adjusted returns
+        - **Sortino Ratio:** Downside risk focus
+        - **Calmar Ratio:** Return vs max drawdown
+        - **VaR/ES:** Tail risk measures
+        """)
+    
+    st.info("""
+    💡 **Tip:** Past performance doesn't guarantee future results. 
+    Use backtesting to understand strategy behavior, not to predict future returns.
+    """)
 
 
 def page_help():
