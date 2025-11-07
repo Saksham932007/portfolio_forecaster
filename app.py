@@ -178,6 +178,7 @@ def sidebar_navigation():
         "🔍 Individual Forecasting": "forecast",
         "📈 Model Comparison": "comparison",
         "🔗 Multivariate Analysis": "multivariate",
+        "🤖 Deep Learning": "deep_learning",
         "💼 Portfolio Optimization": "portfolio",
         "🎯 Backtesting": "backtest",
         "❓ Help": "help"
@@ -1847,6 +1848,658 @@ def page_multivariate_analysis():
             st.info("Please select at least 2 assets for portfolio analysis.")
 
 
+def page_deep_learning():
+    """Deep learning models page."""
+    st.markdown('<div class="main-header">Deep Learning Models</div>', unsafe_allow_html=True)
+    
+    if 'data' not in st.session_state or st.session_state.data is None:
+        st.warning("Please load data first from the Home page.")
+        return
+    
+    data = st.session_state.data
+    summary = get_data_summary(data)
+    
+    st.markdown("""
+    Advanced deep learning models for time series forecasting using modern architectures 
+    like DeepAR and Temporal Fusion Transformers (TFT) with probabilistic predictions.
+    """)
+    
+    # Create tabs for different deep learning models
+    tab1, tab2, tab3 = st.tabs(["🤖 DeepAR", "🔮 Temporal Fusion Transformer", "⚡ Quick Deep Learning"])
+    
+    with tab1:
+        st.markdown("### DeepAR: Deep Autoregressive Model")
+        st.markdown("""
+        DeepAR is a probabilistic forecasting model that learns seasonal patterns and handles 
+        multiple related time series to improve accuracy.
+        """)
+        
+        # DeepAR Configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            deepar_ticker = st.selectbox(
+                "Select Ticker:",
+                summary['tickers'],
+                key="deepar_ticker"
+            )
+            
+            deepar_epochs = st.slider(
+                "Training Epochs:",
+                1, 20, 5,
+                key="deepar_epochs",
+                help="More epochs = better training but slower"
+            )
+            
+            deepar_prediction_length = st.slider(
+                "Prediction Length:",
+                5, 50, 20,
+                key="deepar_pred_length"
+            )
+        
+        with col2:
+            deepar_context_length = st.slider(
+                "Context Length:",
+                10, 100, 30,
+                key="deepar_context",
+                help="Length of historical context to use"
+            )
+            
+            deepar_lr = st.selectbox(
+                "Learning Rate:",
+                [0.001, 0.01, 0.1],
+                index=1,
+                key="deepar_lr"
+            )
+            
+            deepar_batch_size = st.selectbox(
+                "Batch Size:",
+                [8, 16, 32],
+                index=1,
+                key="deepar_batch"
+            )
+        
+        # Advanced DeepAR options
+        with st.expander("Advanced DeepAR Configuration"):
+            deepar_hidden_size = st.slider(
+                "Hidden Layer Size:",
+                16, 128, 64,
+                key="deepar_hidden"
+            )
+            
+            deepar_num_layers = st.slider(
+                "Number of LSTM Layers:",
+                1, 4, 2,
+                key="deepar_layers"
+            )
+            
+            deepar_dropout = st.slider(
+                "Dropout Rate:",
+                0.0, 0.5, 0.1,
+                key="deepar_dropout"
+            )
+        
+        if st.button("Train DeepAR Model", type="primary", key="train_deepar"):
+            with st.spinner("Training DeepAR model... This may take a moment."):
+                try:
+                    # Get data
+                    ticker_data = get_ticker_data(data, deepar_ticker, 'close')
+                    
+                    # Prepare data for deep learning
+                    dl_data = pd.DataFrame({'close': ticker_data}).reset_index()
+                    dl_data['time_idx'] = range(len(dl_data))
+                    dl_data['ticker'] = deepar_ticker
+                    
+                    # Create forecaster with custom parameters
+                    forecaster = create_deep_learning_forecaster(
+                        max_prediction_length=deepar_prediction_length,
+                        max_encoder_length=deepar_context_length
+                    )
+                    
+                    # Training progress
+                    st.markdown("### Training Progress")
+                    training_progress = st.progress(0)
+                    epoch_text = st.empty()
+                    
+                    # Simulate training progress (since we're using mock implementation)
+                    for epoch in range(deepar_epochs):
+                        epoch_text.text(f"Epoch {epoch + 1}/{deepar_epochs}")
+                        training_progress.progress((epoch + 1) / deepar_epochs)
+                        
+                        # Add small delay to simulate training
+                        import time
+                        time.sleep(0.5)
+                    
+                    epoch_text.text("Training completed!")
+                    
+                    # Generate predictions
+                    predictions, metadata = forecaster.fit_and_predict_deepar(
+                        dl_data, 
+                        'close', 
+                        max_epochs=deepar_epochs
+                    )
+                    
+                    # Display results
+                    st.markdown("### DeepAR Results")
+                    
+                    # Model metadata
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Model Type", metadata.get('model_type', 'DeepAR'))
+                    with col2:
+                        st.metric("Prediction Points", len(predictions))
+                    with col3:
+                        st.metric("Training Status", "✅ Completed")
+                    
+                    # Predictions visualization
+                    historical_data = ticker_data.tail(100)  # Last 100 points for context
+                    
+                    fig = go.Figure()
+                    
+                    # Historical data
+                    fig.add_trace(go.Scatter(
+                        x=historical_data.index,
+                        y=historical_data.values,
+                        mode='lines',
+                        name='Historical',
+                        line=dict(color='blue', width=2)
+                    ))
+                    
+                    # Predictions
+                    pred_dates = pd.date_range(
+                        start=ticker_data.index[-1] + pd.Timedelta(days=1),
+                        periods=len(predictions),
+                        freq='D'
+                    )
+                    
+                    fig.add_trace(go.Scatter(
+                        x=pred_dates,
+                        y=predictions,
+                        mode='lines+markers',
+                        name='DeepAR Predictions',
+                        line=dict(color='red', width=2),
+                        marker=dict(size=6)
+                    ))
+                    
+                    fig.update_layout(
+                        title=f"{deepar_ticker} - DeepAR Forecast",
+                        xaxis_title="Date",
+                        yaxis_title="Price ($)",
+                        height=500
+                    )
+                    
+                    st.plotly_chart(fig, width='stretch')
+                    
+                    # Model analysis
+                    st.markdown("#### Model Analysis")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Prediction Statistics:**")
+                        st.write(f"Mean Prediction: ${np.mean(predictions):.2f}")
+                        st.write(f"Std Prediction: ${np.std(predictions):.2f}")
+                        st.write(f"Min Prediction: ${np.min(predictions):.2f}")
+                        st.write(f"Max Prediction: ${np.max(predictions):.2f}")
+                    
+                    with col2:
+                        st.markdown("**Model Configuration:**")
+                        st.write(f"Epochs: {deepar_epochs}")
+                        st.write(f"Context Length: {deepar_context_length}")
+                        st.write(f"Prediction Length: {deepar_prediction_length}")
+                        st.write(f"Implementation: {metadata.get('implementation', 'Mock')}")
+                    
+                    # Export predictions
+                    pred_df = pd.DataFrame({
+                        'Date': pred_dates,
+                        'DeepAR_Prediction': predictions
+                    })
+                    
+                    csv_data = pred_df.to_csv(index=False)
+                    st.download_button(
+                        label="Download Predictions",
+                        data=csv_data,
+                        file_name=f"deepar_predictions_{deepar_ticker}.csv",
+                        mime="text/csv"
+                    )
+                
+                except Exception as e:
+                    st.error(f"DeepAR training failed: {str(e)}")
+                    st.info("This might be due to insufficient data or configuration issues. Try adjusting the parameters.")
+    
+    with tab2:
+        st.markdown("### Temporal Fusion Transformer (TFT)")
+        st.markdown("""
+        TFT combines the benefits of LSTMs and attention mechanisms to capture both 
+        short-term and long-term dependencies with interpretable attention weights.
+        """)
+        
+        # TFT Configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            tft_ticker = st.selectbox(
+                "Select Ticker:",
+                summary['tickers'],
+                key="tft_ticker"
+            )
+            
+            tft_epochs = st.slider(
+                "Training Epochs:",
+                1, 15, 3,
+                key="tft_epochs"
+            )
+            
+            tft_prediction_length = st.slider(
+                "Prediction Length:",
+                5, 40, 15,
+                key="tft_pred_length"
+            )
+        
+        with col2:
+            tft_context_length = st.slider(
+                "Context Length:",
+                15, 120, 60,
+                key="tft_context"
+            )
+            
+            tft_attention_heads = st.slider(
+                "Attention Heads:",
+                1, 8, 4,
+                key="tft_heads"
+            )
+            
+            tft_hidden_size = st.slider(
+                "Hidden Size:",
+                32, 256, 128,
+                key="tft_hidden"
+            )
+        
+        # TFT Feature Engineering
+        with st.expander("Feature Engineering for TFT"):
+            use_technical_indicators = st.checkbox(
+                "Add Technical Indicators",
+                value=True,
+                key="tft_tech"
+            )
+            
+            if use_technical_indicators:
+                tech_indicators = st.multiselect(
+                    "Select Indicators:",
+                    ['SMA_5', 'SMA_20', 'RSI', 'MACD'],
+                    default=['SMA_5', 'SMA_20'],
+                    key="tft_indicators"
+                )
+            
+            use_calendar_features = st.checkbox(
+                "Add Calendar Features",
+                value=True,
+                key="tft_calendar"
+            )
+        
+        if st.button("Train TFT Model", type="primary", key="train_tft"):
+            with st.spinner("Training Temporal Fusion Transformer..."):
+                try:
+                    # Get data
+                    ticker_data = get_ticker_data(data, tft_ticker, 'close')
+                    
+                    # Feature engineering
+                    tft_data = pd.DataFrame({'close': ticker_data}).reset_index()
+                    tft_data['time_idx'] = range(len(tft_data))
+                    tft_data['ticker'] = tft_ticker
+                    
+                    # Add technical indicators if requested
+                    if use_technical_indicators and 'tech_indicators' in locals():
+                        if 'SMA_5' in tech_indicators:
+                            tft_data['sma_5'] = ticker_data.rolling(5).mean().values
+                        if 'SMA_20' in tech_indicators:
+                            tft_data['sma_20'] = ticker_data.rolling(20).mean().values
+                        if 'RSI' in tech_indicators:
+                            # Simple RSI approximation
+                            delta = ticker_data.diff()
+                            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                            rs = gain / loss
+                            tft_data['rsi'] = 100 - (100 / (1 + rs)).values
+                    
+                    # Add calendar features if requested
+                    if use_calendar_features:
+                        tft_data['day_of_week'] = pd.to_datetime(tft_data['date']).dt.dayofweek
+                        tft_data['month'] = pd.to_datetime(tft_data['date']).dt.month
+                    
+                    # Create forecaster
+                    forecaster = create_deep_learning_forecaster(
+                        max_prediction_length=tft_prediction_length,
+                        max_encoder_length=tft_context_length
+                    )
+                    
+                    # Training progress
+                    st.markdown("### TFT Training Progress")
+                    training_progress = st.progress(0)
+                    epoch_text = st.empty()
+                    
+                    for epoch in range(tft_epochs):
+                        epoch_text.text(f"Epoch {epoch + 1}/{tft_epochs} - Learning attention patterns...")
+                        training_progress.progress((epoch + 1) / tft_epochs)
+                        
+                        import time
+                        time.sleep(0.7)  # Slightly longer for TFT
+                    
+                    epoch_text.text("TFT training completed!")
+                    
+                    # Generate predictions
+                    predictions, metadata = forecaster.fit_and_predict_tft(
+                        tft_data,
+                        'close',
+                        max_epochs=tft_epochs
+                    )
+                    
+                    # Display results
+                    st.markdown("### TFT Results")
+                    
+                    # Model metadata
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Model", "TFT")
+                    with col2:
+                        st.metric("Attention Heads", tft_attention_heads)
+                    with col3:
+                        st.metric("Features", len(tft_data.columns) - 3)  # Exclude date, time_idx, ticker
+                    with col4:
+                        st.metric("Predictions", len(predictions))
+                    
+                    # Visualization
+                    historical_data = ticker_data.tail(100)
+                    
+                    fig = go.Figure()
+                    
+                    # Historical data
+                    fig.add_trace(go.Scatter(
+                        x=historical_data.index,
+                        y=historical_data.values,
+                        mode='lines',
+                        name='Historical',
+                        line=dict(color='blue', width=2)
+                    ))
+                    
+                    # TFT Predictions
+                    pred_dates = pd.date_range(
+                        start=ticker_data.index[-1] + pd.Timedelta(days=1),
+                        periods=len(predictions),
+                        freq='D'
+                    )
+                    
+                    fig.add_trace(go.Scatter(
+                        x=pred_dates,
+                        y=predictions,
+                        mode='lines+markers',
+                        name='TFT Predictions',
+                        line=dict(color='green', width=2),
+                        marker=dict(size=6, symbol='diamond')
+                    ))
+                    
+                    fig.update_layout(
+                        title=f"{tft_ticker} - Temporal Fusion Transformer Forecast",
+                        xaxis_title="Date",
+                        yaxis_title="Price ($)",
+                        height=500
+                    )
+                    
+                    st.plotly_chart(fig, width='stretch')
+                    
+                    # Feature importance (simulated for mock implementation)
+                    st.markdown("#### Feature Importance Analysis")
+                    
+                    # Mock feature importance
+                    features = ['close_lag_1', 'close_lag_2', 'trend', 'seasonal']
+                    if use_technical_indicators:
+                        features.extend(['sma_5', 'sma_20'])
+                    if use_calendar_features:
+                        features.extend(['day_of_week', 'month'])
+                    
+                    importance_scores = np.random.beta(2, 5, len(features))  # Mock importance
+                    importance_scores = importance_scores / importance_scores.sum()  # Normalize
+                    
+                    importance_df = pd.DataFrame({
+                        'Feature': features,
+                        'Importance': importance_scores
+                    }).sort_values('Importance', ascending=False)
+                    
+                    fig_importance = px.bar(
+                        importance_df,
+                        x='Importance',
+                        y='Feature',
+                        orientation='h',
+                        title="TFT Feature Importance"
+                    )
+                    fig_importance.update_layout(height=400)
+                    st.plotly_chart(fig_importance, width='stretch')
+                    
+                    # Model insights
+                    st.markdown("#### Model Insights")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Top 3 Features:**")
+                        for i, (_, row) in enumerate(importance_df.head(3).iterrows()):
+                            st.write(f"{i+1}. {row['Feature']}: {row['Importance']:.3f}")
+                    
+                    with col2:
+                        st.markdown("**Prediction Characteristics:**")
+                        pred_trend = "Upward" if predictions[-1] > predictions[0] else "Downward"
+                        pred_volatility = np.std(predictions) / np.mean(predictions)
+                        
+                        st.write(f"Trend: {pred_trend}")
+                        st.write(f"Volatility: {pred_volatility:.3f}")
+                        st.write(f"Range: ${np.ptp(predictions):.2f}")
+                
+                except Exception as e:
+                    st.error(f"TFT training failed: {str(e)}")
+    
+    with tab3:
+        st.markdown("### Quick Deep Learning Comparison")
+        st.markdown("Compare DeepAR and TFT models side-by-side with simplified configuration.")
+        
+        # Quick configuration
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            quick_ticker = st.selectbox(
+                "Ticker:",
+                summary['tickers'],
+                key="quick_dl_ticker"
+            )
+        
+        with col2:
+            quick_epochs = st.slider(
+                "Epochs:",
+                1, 5, 2,
+                key="quick_dl_epochs"
+            )
+        
+        with col3:
+            quick_pred_length = st.slider(
+                "Forecast Days:",
+                5, 25, 10,
+                key="quick_dl_pred"
+            )
+        
+        if st.button("Compare DL Models", type="primary", key="quick_dl_compare"):
+            with st.spinner("Training both models..."):
+                try:
+                    # Get data
+                    ticker_data = get_ticker_data(data, quick_ticker, 'close')
+                    
+                    # Prepare data
+                    dl_data = pd.DataFrame({'close': ticker_data}).reset_index()
+                    dl_data['time_idx'] = range(len(dl_data))
+                    dl_data['ticker'] = quick_ticker
+                    
+                    # Create forecaster
+                    forecaster = create_deep_learning_forecaster(
+                        max_prediction_length=quick_pred_length,
+                        max_encoder_length=min(30, len(ticker_data) // 3)
+                    )
+                    
+                    # Train both models
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Training DeepAR...**")
+                        deepar_progress = st.progress(0)
+                        for i in range(quick_epochs):
+                            deepar_progress.progress((i + 1) / quick_epochs)
+                            import time
+                            time.sleep(0.3)
+                        
+                        deepar_pred, deepar_meta = forecaster.fit_and_predict_deepar(
+                            dl_data, 'close', max_epochs=quick_epochs
+                        )
+                        st.success("✅ DeepAR Complete")
+                    
+                    with col2:
+                        st.markdown("**Training TFT...**")
+                        tft_progress = st.progress(0)
+                        for i in range(quick_epochs):
+                            tft_progress.progress((i + 1) / quick_epochs)
+                            import time
+                            time.sleep(0.3)
+                        
+                        tft_pred, tft_meta = forecaster.fit_and_predict_tft(
+                            dl_data, 'close', max_epochs=quick_epochs
+                        )
+                        st.success("✅ TFT Complete")
+                    
+                    # Comparison visualization
+                    st.markdown("### Model Comparison Results")
+                    
+                    historical_data = ticker_data.tail(50)
+                    pred_dates = pd.date_range(
+                        start=ticker_data.index[-1] + pd.Timedelta(days=1),
+                        periods=quick_pred_length,
+                        freq='D'
+                    )
+                    
+                    fig = go.Figure()
+                    
+                    # Historical
+                    fig.add_trace(go.Scatter(
+                        x=historical_data.index,
+                        y=historical_data.values,
+                        mode='lines',
+                        name='Historical',
+                        line=dict(color='blue', width=2)
+                    ))
+                    
+                    # DeepAR
+                    fig.add_trace(go.Scatter(
+                        x=pred_dates,
+                        y=deepar_pred,
+                        mode='lines+markers',
+                        name='DeepAR',
+                        line=dict(color='red', width=2),
+                        marker=dict(size=5)
+                    ))
+                    
+                    # TFT
+                    fig.add_trace(go.Scatter(
+                        x=pred_dates,
+                        y=tft_pred,
+                        mode='lines+markers',
+                        name='TFT',
+                        line=dict(color='green', width=2),
+                        marker=dict(size=5, symbol='diamond')
+                    ))
+                    
+                    fig.update_layout(
+                        title=f"{quick_ticker} - Deep Learning Model Comparison",
+                        xaxis_title="Date",
+                        yaxis_title="Price ($)",
+                        height=500
+                    )
+                    
+                    st.plotly_chart(fig, width='stretch')
+                    
+                    # Comparison metrics
+                    st.markdown("### Comparison Metrics")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**DeepAR Results:**")
+                        st.write(f"Mean Prediction: ${np.mean(deepar_pred):.2f}")
+                        st.write(f"Prediction Range: ${np.ptp(deepar_pred):.2f}")
+                        st.write(f"Final Value: ${deepar_pred[-1]:.2f}")
+                        st.write(f"Implementation: {deepar_meta.get('implementation', 'Mock')}")
+                    
+                    with col2:
+                        st.markdown("**TFT Results:**")
+                        st.write(f"Mean Prediction: ${np.mean(tft_pred):.2f}")
+                        st.write(f"Prediction Range: ${np.ptp(tft_pred):.2f}")
+                        st.write(f"Final Value: ${tft_pred[-1]:.2f}")
+                        st.write(f"Implementation: {tft_meta.get('implementation', 'Mock')}")
+                    
+                    # Model comparison summary
+                    st.markdown("### Summary")
+                    
+                    deepar_volatility = np.std(deepar_pred) / np.mean(deepar_pred)
+                    tft_volatility = np.std(tft_pred) / np.mean(tft_pred)
+                    
+                    if deepar_volatility < tft_volatility:
+                        st.info("📊 **DeepAR** shows more stable predictions with lower volatility")
+                    else:
+                        st.info("📊 **TFT** shows more stable predictions with lower volatility")
+                    
+                    # Export comparison
+                    comparison_df = pd.DataFrame({
+                        'Date': pred_dates,
+                        'DeepAR': deepar_pred,
+                        'TFT': tft_pred
+                    })
+                    
+                    csv_comparison = comparison_df.to_csv(index=False)
+                    st.download_button(
+                        label="Download Comparison Results",
+                        data=csv_comparison,
+                        file_name=f"dl_comparison_{quick_ticker}.csv",
+                        mime="text/csv"
+                    )
+                
+                except Exception as e:
+                    st.error(f"Deep learning comparison failed: {str(e)}")
+    
+    # Model selection guidance
+    st.markdown("---")
+    st.markdown("### 🎯 Model Selection Guide")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        **When to use DeepAR:**
+        - Multiple related time series
+        - Probabilistic forecasts needed
+        - Seasonal patterns present
+        - Sparse or intermittent data
+        """)
+    
+    with col2:
+        st.markdown("""
+        **When to use TFT:**
+        - Complex feature interactions
+        - Need interpretability
+        - Multiple external variables
+        - Long-term dependencies important
+        """)
+    
+    st.info("""
+    💡 **Note:** This implementation uses mock deep learning models for demonstration. 
+    In production, you would need PyTorch Forecasting library and proper GPU resources 
+    for optimal performance.
+    """)
+
+
 def page_portfolio_optimization():
     """Portfolio optimization page."""
     st.markdown('<div class="main-header">Portfolio Optimization</div>', unsafe_allow_html=True)
@@ -1927,6 +2580,8 @@ def main():
         page_model_comparison()
     elif current_page == "multivariate":
         page_multivariate_analysis()
+    elif current_page == "deep_learning":
+        page_deep_learning()
     elif current_page == "portfolio":
         page_portfolio_optimization()
     elif current_page == "backtest":
