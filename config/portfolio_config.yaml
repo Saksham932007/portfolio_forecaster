@@ -1,0 +1,148 @@
+# Portfolio Forecasting System - Default Configuration
+
+model:
+  default_periods: 30
+  confidence_interval: 0.95
+  cross_validation_folds: 5
+  arima_auto: true
+  arima_max_p: 5
+  arima_max_d: 2
+  arima_max_q: 5
+  arima_seasonal: true
+  arima_m: 12
+  prophet_growth: linear
+  prophet_yearly_seasonality: true
+  prophet_weekly_seasonality: true
+  prophet_daily_seasonality: false
+  prophet_changepoint_prior_scale: 0.05
+  prophet_seasonality_prior_scale: 10.0
+  lstm_units: 50
+  lstm_layers: 2
+  lstm_dropout: 0.2
+  lstm_epochs: 100
+  lstm_batch_size: 32
+  lstm_lookback: 60
+  ensemble_use_voting: true
+  ensemble_use_stacking: true
+  ensemble_use_blending: true
+  ensemble_weight_method: performance_based
+
+data:
+  default_source: yfinance
+  backup_sources:
+    - alpha_vantage
+    - quandl
+  fill_method: forward
+  outlier_detection: true
+  outlier_method: iqr
+  outlier_threshold: 3.0
+  default_frequency: D
+  min_data_points: 100
+  max_data_points: 10000
+  market_hours_only: false
+  adjust_splits: true
+  adjust_dividends: true
+
+risk:
+  var_confidence_levels:
+    - 0.95
+    - 0.99
+    - 0.999
+  var_methods:
+    - historical
+    - parametric
+    - monte_carlo
+  var_lookback_days: 252
+  mc_simulations: 10000
+  mc_time_horizon: 252
+  mc_confidence_intervals:
+    - 0.05
+    - 0.25
+    - 0.5
+    - 0.75
+    - 0.95
+  stress_scenarios:
+    Market Crash:
+      equity: -0.30
+      bond: -0.05
+      commodity: -0.15
+    Interest Rate Spike:
+      equity: -0.10
+      bond: -0.20
+      commodity: 0.05
+    Inflation Surge:
+      equity: -0.05
+      bond: -0.15
+      commodity: 0.20
+    Currency Crisis:
+      equity: -0.15
+      bond: 0.02
+      fx: -0.25
+  stress_shock_sizes:
+    - 0.01
+    - 0.02
+    - 0.05
+    - 0.10
+    - 0.20
+  benchmark_symbol: ^GSPC
+  risk_free_rate: 0.02
+
+ui:
+  theme: light
+  color_scheme: blue
+  chart_style: plotly_white
+  sidebar_width: 300
+  main_content_width: wide
+  show_tooltips: true
+  show_help_text: true
+  default_chart_height: 500
+  interactive_charts: true
+  show_grid: true
+  show_legend: true
+  max_table_rows: 1000
+  decimal_places: 4
+  percentage_format: "0.2%"
+  currency_symbol: "$"
+  cache_data: true
+  cache_duration: 3600
+  lazy_loading: true
+  export_formats:
+    - csv
+    - xlsx
+    - json
+    - parquet
+  default_export_format: csv
+  include_metadata: true
+
+api:
+  alpha_vantage_key: null
+  quandl_key: null
+  fred_key: null
+  news_api_key: null
+  requests_per_minute: 60
+  retry_attempts: 3
+  retry_delay: 1.0
+  connection_timeout: 10
+  read_timeout: 30
+  enable_cache: true
+  cache_directory: data/cache
+  cache_expiry_hours: 24
+  validate_data: true
+  min_data_quality_score: 0.8
+  auto_fallback: true
+
+system:
+  log_level: INFO
+  log_file: logs/portfolio_forecaster.log
+  log_rotation: true
+  max_log_size: 10MB
+  max_workers: 4
+  memory_limit: 4GB
+  enable_gpu: false
+  data_directory: data
+  models_directory: models
+  exports_directory: exports
+  enable_auth: false
+  session_timeout: 3600
+  check_updates: true
+  auto_update: false

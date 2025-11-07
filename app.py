@@ -28,6 +28,9 @@ try:
     from deep_learning_model import create_deep_learning_forecaster
     from run_backtest import SimpleBacktester
     from performance_reporting import PerformanceReporter
+    from api_integration import MarketDataAPI, AlternativeDataAPI
+    from config_manager import config_manager
+    from model_ensemble import AdvancedEnsemble
     from api_integration import MarketDataAPI, AlternativeDataAPI, get_market_overview
     from interactive_plotting import InteractivePlotter, quick_line_plot, create_dashboard_plot
     
@@ -193,6 +196,8 @@ def sidebar_navigation():
         "🛡️ Risk Management": "risk",
         "📋 Performance Reports": "reports",
         "🌐 Market Dashboard": "market",
+        "🤖 Ensemble Models": "ensemble",
+        "⚙️ Advanced Settings": "settings",
         "❓ Help": "help"
     }
     
@@ -6558,6 +6563,1328 @@ def page_market_dashboard():
     """)
 
 
+def page_ensemble_models():
+    """Advanced ensemble forecasting with multiple models."""
+    st.markdown('<div class="main-header">🤖 Ensemble Models</div>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    Advanced ensemble forecasting combining multiple machine learning models 
+    for improved accuracy and robustness. Choose from voting, stacking, and 
+    weighted ensemble methods.
+    """)
+    
+    # Data input section
+    st.markdown("### 📊 Data Selection")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        ensemble_symbol = st.text_input(
+            "Stock Symbol:", 
+            value="AAPL", 
+            key="ensemble_symbol",
+            help="Enter a stock ticker symbol"
+        ).upper()
+    
+    with col2:
+        ensemble_period = st.selectbox(
+            "Data Period:",
+            ["1y", "2y", "5y", "max"],
+            index=1,
+            key="ensemble_period"
+        )
+    
+    if st.button("Load Data for Ensemble Analysis", type="primary"):
+        if ensemble_symbol:
+            with st.spinner(f"Loading {ensemble_symbol} data for ensemble analysis..."):
+                try:
+                    # Load data
+                    data = get_ticker_data(ensemble_symbol, period=ensemble_period)
+                    
+                    if data is not None and len(data) > 100:
+                        st.session_state.ensemble_data = data
+                        st.session_state.ensemble_symbol = ensemble_symbol
+                        st.success(f"Loaded {len(data)} data points for {ensemble_symbol}")
+                        
+                        # Display basic data info
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Data Points", len(data))
+                        with col2:
+                            st.metric("Date Range", f"{(data.index[-1] - data.index[0]).days} days")
+                        with col3:
+                            current_price = data['Close'].iloc[-1]
+                            st.metric("Current Price", f"${current_price:.2f}")
+                        with col4:
+                            volatility = data['Close'].pct_change().std() * np.sqrt(252) * 100
+                            st.metric("Annual Volatility", f"{volatility:.1f}%")
+                    
+                    else:
+                        st.error(f"Insufficient data for {ensemble_symbol}. Need at least 100 data points.")
+                
+                except Exception as e:
+                    st.error(f"Error loading data for {ensemble_symbol}: {str(e)}")
+        else:
+            st.warning("Please enter a stock symbol.")
+    
+    # Ensemble configuration and analysis
+    if 'ensemble_data' in st.session_state and st.session_state.ensemble_data is not None:
+        st.markdown("---")
+        st.markdown("### 🎛️ Ensemble Configuration")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Ensemble Methods")
+            
+            use_voting = st.checkbox(
+                "Voting Ensemble", 
+                value=True, 
+                help="Combine predictions using voting"
+            )
+            
+            use_stacking = st.checkbox(
+                "Stacking Ensemble", 
+                value=True, 
+                help="Use meta-learner for stacking"
+            )
+            
+            use_blending = st.checkbox(
+                "Weighted Average", 
+                value=True, 
+                help="Performance-weighted ensemble"
+            )
+            
+            st.markdown("#### Model Selection")
+            
+            available_models = [
+                'Linear Regression', 'Ridge Regression', 'Lasso Regression',
+                'Elastic Net', 'Random Forest', 'Gradient Boosting',
+                'Support Vector Regression', 'Neural Network'
+            ]
+            
+            selected_models = st.multiselect(
+                "Select Base Models:",
+                available_models,
+                default=available_models[:6],
+                help="Choose models to include in ensemble"
+            )
+        
+        with col2:
+            st.markdown("#### Forecast Parameters")
+            
+            forecast_periods = st.slider(
+                "Forecast Periods",
+                min_value=7,
+                max_value=90,
+                value=30,
+                help="Number of days to forecast"
+            )
+            
+            confidence_level = st.slider(
+                "Confidence Level",
+                min_value=0.80,
+                max_value=0.99,
+                value=0.95,
+                step=0.01,
+                help="Confidence level for prediction intervals"
+            )
+            
+            lookback_window = st.slider(
+                "Lookback Window",
+                min_value=10,
+                max_value=60,
+                value=20,
+                help="Number of past observations for features"
+            )
+            
+            weight_method = st.selectbox(
+                "Ensemble Weight Method:",
+                ["performance_based", "equal", "inverse_variance"],
+                help="Method for calculating ensemble weights"
+            )
+        
+        # Run ensemble analysis
+        if st.button("🚀 Run Ensemble Analysis", type="primary"):
+            if selected_models:
+                with st.spinner("Training ensemble models and generating forecasts..."):
+                    try:
+                        # Initialize ensemble
+                        ensemble = AdvancedEnsemble(
+                            use_stacking=use_stacking,
+                            use_voting=use_voting,
+                            use_blending=use_blending
+                        )
+                        
+                        # Use closing prices for training
+                        price_data = st.session_state.ensemble_data['Close']
+                        
+                        # Train ensemble
+                        ensemble.fit(price_data, lookback_window=lookback_window)
+                        
+                        # Generate forecasts
+                        forecast_results = ensemble.forecast(
+                            price_data, 
+                            periods=forecast_periods, 
+                            confidence_interval=confidence_level
+                        )
+                        
+                        st.session_state.ensemble_results = forecast_results
+                        st.session_state.ensemble_model = ensemble
+                        
+                        st.success("Ensemble analysis completed successfully!")
+                        
+                        # Display results
+                        st.markdown("---")
+                        st.markdown("### 📈 Ensemble Forecast Results")
+                        
+                        # Create forecast visualization
+                        fig = go.Figure()
+                        
+                        # Historical data
+                        recent_data = price_data.tail(60)  # Last 60 days
+                        fig.add_trace(go.Scatter(
+                            x=recent_data.index,
+                            y=recent_data.values,
+                            mode='lines',
+                            name='Historical',
+                            line=dict(color='blue', width=2)
+                        ))
+                        
+                        # Forecast
+                        fig.add_trace(go.Scatter(
+                            x=forecast_results['dates'],
+                            y=forecast_results['forecast'],
+                            mode='lines',
+                            name='Ensemble Forecast',
+                            line=dict(color='red', width=2, dash='dash')
+                        ))
+                        
+                        # Confidence intervals
+                        fig.add_trace(go.Scatter(
+                            x=list(forecast_results['dates']) + list(forecast_results['dates'][::-1]),
+                            y=list(forecast_results['upper_bound']) + list(forecast_results['lower_bound'][::-1]),
+                            fill='toself',
+                            fillcolor='rgba(255, 0, 0, 0.2)',
+                            line=dict(color='rgba(255,255,255,0)'),
+                            name=f'{confidence_level:.0%} Confidence Interval',
+                            showlegend=True
+                        ))
+                        
+                        fig.update_layout(
+                            title=f"Ensemble Forecast for {st.session_state.ensemble_symbol}",
+                            xaxis_title="Date",
+                            yaxis_title="Price ($)",
+                            height=500,
+                            hovermode='x unified'
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Forecast statistics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        current_price = price_data.iloc[-1]
+                        forecast_price = forecast_results['forecast'][-1]
+                        price_change = ((forecast_price / current_price) - 1) * 100
+                        
+                        with col1:
+                            st.metric("Current Price", f"${current_price:.2f}")
+                        with col2:
+                            st.metric(
+                                f"Forecast ({forecast_periods}d)", 
+                                f"${forecast_price:.2f}",
+                                f"{price_change:+.1f}%"
+                            )
+                        with col3:
+                            forecast_range = forecast_results['upper_bound'][-1] - forecast_results['lower_bound'][-1]
+                            st.metric("Forecast Range", f"${forecast_range:.2f}")
+                        with col4:
+                            avg_confidence_width = np.mean(forecast_results['upper_bound'] - forecast_results['lower_bound'])
+                            st.metric("Avg Confidence Width", f"${avg_confidence_width:.2f}")
+                        
+                        # Model performance comparison
+                        st.markdown("### 🏆 Model Performance Comparison")
+                        
+                        model_importance = ensemble.get_model_importance()
+                        
+                        # Model performance chart
+                        fig_models = go.Figure()
+                        
+                        fig_models.add_trace(go.Bar(
+                            x=model_importance['Model'],
+                            y=model_importance['Weight'],
+                            name='Ensemble Weight',
+                            marker_color='lightblue',
+                            yaxis='y'
+                        ))
+                        
+                        fig_models.add_trace(go.Scatter(
+                            x=model_importance['Model'],
+                            y=1.0 / (model_importance['MSE'] + 1e-8),  # Inverse MSE for better visualization
+                            mode='markers+lines',
+                            name='Performance Score',
+                            marker=dict(size=10, color='red'),
+                            yaxis='y2'
+                        ))
+                        
+                        fig_models.update_layout(
+                            title="Model Weights vs Performance",
+                            xaxis_title="Model",
+                            yaxis=dict(title="Ensemble Weight", side='left'),
+                            yaxis2=dict(title="Performance Score", side='right', overlaying='y'),
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_models, use_container_width=True)
+                        
+                        # Model performance table
+                        st.markdown("#### Model Performance Details")
+                        
+                        performance_df = model_importance.copy()
+                        performance_df['Weight'] = performance_df['Weight'].apply(lambda x: f"{x:.3f}")
+                        performance_df['MSE'] = performance_df['MSE'].apply(lambda x: f"{x:.6f}" if x != np.inf else "N/A")
+                        performance_df['MSE_Std'] = performance_df['MSE_Std'].apply(lambda x: f"{x:.6f}" if x != np.inf else "N/A")
+                        performance_df['Importance_Score'] = performance_df['Importance_Score'].apply(lambda x: f"{x:.6f}")
+                        
+                        st.dataframe(performance_df, hide_index=True)
+                        
+                        # Ensemble summary
+                        ensemble_summary = ensemble.get_ensemble_summary()
+                        
+                        st.markdown("### 📊 Ensemble Summary")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.info(f"**Total Models:** {ensemble_summary['total_models']}")
+                            st.info(f"**Fitted Models:** {ensemble_summary['fitted_models']}")
+                            st.info(f"**Ensemble Methods:** {', '.join(ensemble_summary['ensemble_methods'])}")
+                        
+                        with col2:
+                            if ensemble_summary['best_model']:
+                                st.success(f"**Best Model:** {ensemble_summary['best_model'].upper()}")
+                            if ensemble_summary['worst_model']:
+                                st.error(f"**Worst Model:** {ensemble_summary['worst_model'].upper()}")
+                            if ensemble_summary['average_performance']:
+                                st.info(f"**Average MSE:** {ensemble_summary['average_performance']:.6f}")
+                    
+                    except Exception as e:
+                        st.error(f"Error in ensemble analysis: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
+            else:
+                st.warning("Please select at least one base model for the ensemble.")
+    
+    else:
+        st.info("👆 Load data to begin ensemble analysis")
+    
+    # Feature explanations
+    st.markdown("---")
+    st.markdown("### 💡 Ensemble Methods Explained")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        **🗳️ Voting Ensemble**
+        - Combines predictions from multiple models
+        - Each model gets equal vote by default
+        - Can use weighted voting based on performance
+        - Reduces variance and improves stability
+        """)
+    
+    with col2:
+        st.markdown("""
+        **🏗️ Stacking Ensemble**
+        - Uses meta-learner to combine base models
+        - Base models trained on original data
+        - Meta-learner learns optimal combination
+        - Often achieves best performance
+        """)
+    
+    with col3:
+        st.markdown("""
+        **⚖️ Weighted Average**
+        - Weights models by their performance
+        - Better models get higher weights
+        - Automatic weight calculation
+        - Balances accuracy and simplicity
+        """)
+    
+    st.markdown("""
+    ### 🎯 Model Features
+    
+    **Base Models Include:**
+    - **Linear Models:** Linear, Ridge, Lasso, Elastic Net regression
+    - **Tree Models:** Random Forest, Gradient Boosting
+    - **Non-linear:** Support Vector Regression, Neural Networks
+    
+    **Advanced Features:**
+    - Automatic feature engineering (technical indicators)
+    - Cross-validation for robust evaluation
+    - Performance-based weighting
+    - Confidence interval estimation
+    - Model importance analysis
+    """)
+
+
+def page_advanced_settings():
+    """Advanced system configuration and settings page."""
+    st.markdown('<div class="main-header">⚙️ Advanced Settings</div>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    Configure advanced system settings including model parameters, data sources, 
+    risk management settings, and user interface preferences.
+    """)
+    
+    # Create tabs for different setting categories
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🤖 Model Settings", 
+        "📊 Data Settings", 
+        "⚖️ Risk Settings", 
+        "🎨 UI Settings", 
+        "🔌 API Settings", 
+        "🔧 System Settings"
+    ])
+    
+    with tab1:
+        st.markdown("### Model Configuration")
+        st.markdown("Configure forecasting models and ensemble settings.")
+        
+        model_config = config_manager.get_config('model')
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### General Model Settings")
+            
+            new_periods = st.number_input(
+                "Default Forecast Periods", 
+                min_value=1, 
+                max_value=365, 
+                value=model_config.default_periods,
+                help="Default number of periods to forecast"
+            )
+            
+            new_confidence = st.slider(
+                "Confidence Interval", 
+                min_value=0.8, 
+                max_value=0.999, 
+                value=model_config.confidence_interval,
+                step=0.01,
+                help="Confidence level for forecast intervals"
+            )
+            
+            new_cv_folds = st.number_input(
+                "Cross-Validation Folds", 
+                min_value=2, 
+                max_value=10, 
+                value=model_config.cross_validation_folds,
+                help="Number of folds for cross-validation"
+            )
+            
+            st.markdown("#### ARIMA Settings")
+            
+            new_arima_auto = st.checkbox(
+                "Auto ARIMA", 
+                value=model_config.arima_auto,
+                help="Automatically select ARIMA parameters"
+            )
+            
+            if not new_arima_auto:
+                col_p, col_d, col_q = st.columns(3)
+                
+                with col_p:
+                    new_arima_max_p = st.number_input("Max P", min_value=0, max_value=10, value=model_config.arima_max_p)
+                with col_d:
+                    new_arima_max_d = st.number_input("Max D", min_value=0, max_value=5, value=model_config.arima_max_d)
+                with col_q:
+                    new_arima_max_q = st.number_input("Max Q", min_value=0, max_value=10, value=model_config.arima_max_q)
+            else:
+                new_arima_max_p = model_config.arima_max_p
+                new_arima_max_d = model_config.arima_max_d
+                new_arima_max_q = model_config.arima_max_q
+            
+            new_arima_seasonal = st.checkbox(
+                "Seasonal ARIMA", 
+                value=model_config.arima_seasonal,
+                help="Include seasonal components"
+            )
+            
+            if new_arima_seasonal:
+                new_arima_m = st.number_input(
+                    "Seasonal Periods", 
+                    min_value=2, 
+                    max_value=52, 
+                    value=model_config.arima_m,
+                    help="Number of periods in a season"
+                )
+            else:
+                new_arima_m = model_config.arima_m
+        
+        with col2:
+            st.markdown("#### Prophet Settings")
+            
+            new_prophet_growth = st.selectbox(
+                "Growth Model", 
+                ["linear", "logistic"], 
+                index=0 if model_config.prophet_growth == "linear" else 1,
+                help="Prophet growth model type"
+            )
+            
+            new_prophet_yearly = st.checkbox(
+                "Yearly Seasonality", 
+                value=model_config.prophet_yearly_seasonality
+            )
+            
+            new_prophet_weekly = st.checkbox(
+                "Weekly Seasonality", 
+                value=model_config.prophet_weekly_seasonality
+            )
+            
+            new_prophet_daily = st.checkbox(
+                "Daily Seasonality", 
+                value=model_config.prophet_daily_seasonality
+            )
+            
+            new_prophet_changepoint = st.slider(
+                "Changepoint Prior Scale", 
+                min_value=0.001, 
+                max_value=0.5, 
+                value=model_config.prophet_changepoint_prior_scale,
+                step=0.001,
+                help="Flexibility of trend changes"
+            )
+            
+            new_prophet_seasonality = st.slider(
+                "Seasonality Prior Scale", 
+                min_value=0.1, 
+                max_value=50.0, 
+                value=model_config.prophet_seasonality_prior_scale,
+                step=0.1,
+                help="Strength of seasonality"
+            )
+            
+            st.markdown("#### LSTM Settings")
+            
+            new_lstm_units = st.number_input(
+                "LSTM Units", 
+                min_value=10, 
+                max_value=200, 
+                value=model_config.lstm_units,
+                help="Number of LSTM units per layer"
+            )
+            
+            new_lstm_layers = st.number_input(
+                "LSTM Layers", 
+                min_value=1, 
+                max_value=5, 
+                value=model_config.lstm_layers,
+                help="Number of LSTM layers"
+            )
+            
+            new_lstm_dropout = st.slider(
+                "Dropout Rate", 
+                min_value=0.0, 
+                max_value=0.5, 
+                value=model_config.lstm_dropout,
+                step=0.05,
+                help="Dropout rate for regularization"
+            )
+            
+            new_lstm_epochs = st.number_input(
+                "Training Epochs", 
+                min_value=10, 
+                max_value=500, 
+                value=model_config.lstm_epochs,
+                help="Number of training epochs"
+            )
+            
+            new_lstm_batch_size = st.number_input(
+                "Batch Size", 
+                min_value=8, 
+                max_value=128, 
+                value=model_config.lstm_batch_size,
+                help="Training batch size"
+            )
+            
+            new_lstm_lookback = st.number_input(
+                "Lookback Window", 
+                min_value=10, 
+                max_value=200, 
+                value=model_config.lstm_lookback,
+                help="Number of past observations to use"
+            )
+        
+        st.markdown("#### Ensemble Settings")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            new_ensemble_voting = st.checkbox(
+                "Use Voting Ensemble", 
+                value=model_config.ensemble_use_voting,
+                help="Combine models using voting"
+            )
+        
+        with col2:
+            new_ensemble_stacking = st.checkbox(
+                "Use Stacking Ensemble", 
+                value=model_config.ensemble_use_stacking,
+                help="Use meta-learner for stacking"
+            )
+        
+        with col3:
+            new_ensemble_blending = st.checkbox(
+                "Use Blending Ensemble", 
+                value=model_config.ensemble_use_blending,
+                help="Blend multiple model predictions"
+            )
+        
+        new_ensemble_weight_method = st.selectbox(
+            "Ensemble Weight Method",
+            ["performance_based", "equal", "inverse_variance"],
+            index=["performance_based", "equal", "inverse_variance"].index(model_config.ensemble_weight_method),
+            help="Method for calculating ensemble weights"
+        )
+        
+        # Update model configuration
+        if st.button("Save Model Settings", type="primary"):
+            config_manager.update_config('model',
+                default_periods=new_periods,
+                confidence_interval=new_confidence,
+                cross_validation_folds=new_cv_folds,
+                arima_auto=new_arima_auto,
+                arima_max_p=new_arima_max_p,
+                arima_max_d=new_arima_max_d,
+                arima_max_q=new_arima_max_q,
+                arima_seasonal=new_arima_seasonal,
+                arima_m=new_arima_m,
+                prophet_growth=new_prophet_growth,
+                prophet_yearly_seasonality=new_prophet_yearly,
+                prophet_weekly_seasonality=new_prophet_weekly,
+                prophet_daily_seasonality=new_prophet_daily,
+                prophet_changepoint_prior_scale=new_prophet_changepoint,
+                prophet_seasonality_prior_scale=new_prophet_seasonality,
+                lstm_units=new_lstm_units,
+                lstm_layers=new_lstm_layers,
+                lstm_dropout=new_lstm_dropout,
+                lstm_epochs=new_lstm_epochs,
+                lstm_batch_size=new_lstm_batch_size,
+                lstm_lookback=new_lstm_lookback,
+                ensemble_use_voting=new_ensemble_voting,
+                ensemble_use_stacking=new_ensemble_stacking,
+                ensemble_use_blending=new_ensemble_blending,
+                ensemble_weight_method=new_ensemble_weight_method
+            )
+            config_manager.save_config()
+            st.success("Model settings saved successfully!")
+    
+    with tab2:
+        st.markdown("### Data Configuration")
+        st.markdown("Configure data sources and processing parameters.")
+        
+        data_config = config_manager.get_config('data')
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Data Sources")
+            
+            new_default_source = st.selectbox(
+                "Default Data Source",
+                ["yfinance", "alpha_vantage", "quandl"],
+                index=["yfinance", "alpha_vantage", "quandl"].index(data_config.default_source),
+                help="Primary data source for market data"
+            )
+            
+            new_backup_sources = st.multiselect(
+                "Backup Sources",
+                ["yfinance", "alpha_vantage", "quandl"],
+                default=data_config.backup_sources,
+                help="Fallback data sources"
+            )
+            
+            st.markdown("#### Data Processing")
+            
+            new_fill_method = st.selectbox(
+                "Missing Data Handling",
+                ["forward", "backward", "interpolate", "drop"],
+                index=["forward", "backward", "interpolate", "drop"].index(data_config.fill_method),
+                help="Method for handling missing data"
+            )
+            
+            new_outlier_detection = st.checkbox(
+                "Enable Outlier Detection",
+                value=data_config.outlier_detection,
+                help="Automatically detect and handle outliers"
+            )
+            
+            if new_outlier_detection:
+                new_outlier_method = st.selectbox(
+                    "Outlier Detection Method",
+                    ["iqr", "zscore", "isolation_forest"],
+                    index=["iqr", "zscore", "isolation_forest"].index(data_config.outlier_method),
+                    help="Statistical method for outlier detection"
+                )
+                
+                new_outlier_threshold = st.slider(
+                    "Outlier Threshold",
+                    min_value=1.0,
+                    max_value=5.0,
+                    value=data_config.outlier_threshold,
+                    step=0.1,
+                    help="Threshold for outlier detection"
+                )
+            else:
+                new_outlier_method = data_config.outlier_method
+                new_outlier_threshold = data_config.outlier_threshold
+        
+        with col2:
+            st.markdown("#### Data Limits")
+            
+            new_default_frequency = st.selectbox(
+                "Default Frequency",
+                ["D", "W", "M", "Q", "Y"],
+                index=["D", "W", "M", "Q", "Y"].index(data_config.default_frequency),
+                help="Default data frequency"
+            )
+            
+            new_min_data_points = st.number_input(
+                "Minimum Data Points",
+                min_value=50,
+                max_value=1000,
+                value=data_config.min_data_points,
+                help="Minimum required data points for analysis"
+            )
+            
+            new_max_data_points = st.number_input(
+                "Maximum Data Points",
+                min_value=1000,
+                max_value=50000,
+                value=data_config.max_data_points,
+                help="Maximum data points to load"
+            )
+            
+            st.markdown("#### Market Data Settings")
+            
+            new_market_hours_only = st.checkbox(
+                "Market Hours Only",
+                value=data_config.market_hours_only,
+                help="Only use data from market hours"
+            )
+            
+            new_adjust_splits = st.checkbox(
+                "Adjust for Stock Splits",
+                value=data_config.adjust_splits,
+                help="Adjust prices for stock splits"
+            )
+            
+            new_adjust_dividends = st.checkbox(
+                "Adjust for Dividends",
+                value=data_config.adjust_dividends,
+                help="Adjust prices for dividends"
+            )
+        
+        # Update data configuration
+        if st.button("Save Data Settings", type="primary"):
+            config_manager.update_config('data',
+                default_source=new_default_source,
+                backup_sources=new_backup_sources,
+                fill_method=new_fill_method,
+                outlier_detection=new_outlier_detection,
+                outlier_method=new_outlier_method,
+                outlier_threshold=new_outlier_threshold,
+                default_frequency=new_default_frequency,
+                min_data_points=new_min_data_points,
+                max_data_points=new_max_data_points,
+                market_hours_only=new_market_hours_only,
+                adjust_splits=new_adjust_splits,
+                adjust_dividends=new_adjust_dividends
+            )
+            config_manager.save_config()
+            st.success("Data settings saved successfully!")
+    
+    with tab3:
+        st.markdown("### Risk Management Configuration")
+        st.markdown("Configure risk analysis and stress testing parameters.")
+        
+        risk_config = config_manager.get_config('risk')
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Value at Risk (VaR)")
+            
+            current_var_levels = risk_config.var_confidence_levels
+            new_var_levels_str = st.text_input(
+                "VaR Confidence Levels (comma-separated)",
+                value=", ".join([str(x) for x in current_var_levels]),
+                help="Confidence levels for VaR calculation (e.g., 0.95, 0.99)"
+            )
+            
+            try:
+                new_var_levels = [float(x.strip()) for x in new_var_levels_str.split(",")]
+            except:
+                new_var_levels = current_var_levels
+                st.error("Invalid VaR confidence levels format")
+            
+            new_var_methods = st.multiselect(
+                "VaR Methods",
+                ["historical", "parametric", "monte_carlo"],
+                default=risk_config.var_methods,
+                help="Methods for VaR calculation"
+            )
+            
+            new_var_lookback = st.number_input(
+                "VaR Lookback Days",
+                min_value=30,
+                max_value=1000,
+                value=risk_config.var_lookback_days,
+                help="Historical data window for VaR"
+            )
+            
+            st.markdown("#### Monte Carlo Settings")
+            
+            new_mc_simulations = st.number_input(
+                "Monte Carlo Simulations",
+                min_value=1000,
+                max_value=100000,
+                value=risk_config.mc_simulations,
+                step=1000,
+                help="Number of Monte Carlo simulations"
+            )
+            
+            new_mc_horizon = st.number_input(
+                "Time Horizon (Days)",
+                min_value=1,
+                max_value=1000,
+                value=risk_config.mc_time_horizon,
+                help="Time horizon for Monte Carlo analysis"
+            )
+        
+        with col2:
+            st.markdown("#### Portfolio Metrics")
+            
+            new_benchmark = st.text_input(
+                "Benchmark Symbol",
+                value=risk_config.benchmark_symbol,
+                help="Benchmark index for comparison (e.g., ^GSPC for S&P 500)"
+            )
+            
+            new_risk_free_rate = st.slider(
+                "Risk-Free Rate",
+                min_value=0.0,
+                max_value=0.1,
+                value=risk_config.risk_free_rate,
+                step=0.001,
+                format="%.3f",
+                help="Annual risk-free rate for Sharpe ratio calculation"
+            )
+            
+            st.markdown("#### Stress Testing")
+            
+            # Display current stress scenarios
+            st.markdown("**Current Stress Scenarios:**")
+            
+            for scenario_name, scenario_values in risk_config.stress_scenarios.items():
+                with st.expander(f"📊 {scenario_name}"):
+                    for asset_class, shock in scenario_values.items():
+                        st.write(f"• **{asset_class.title()}:** {shock:+.1%}")
+            
+            # Stress shock sizes
+            current_shock_sizes = risk_config.stress_shock_sizes
+            new_shock_sizes_str = st.text_input(
+                "Stress Test Shock Sizes (comma-separated)",
+                value=", ".join([str(x) for x in current_shock_sizes]),
+                help="Shock sizes for stress testing (e.g., 0.01, 0.05, 0.10)"
+            )
+            
+            try:
+                new_shock_sizes = [float(x.strip()) for x in new_shock_sizes_str.split(",")]
+            except:
+                new_shock_sizes = current_shock_sizes
+                st.error("Invalid shock sizes format")
+        
+        # Update risk configuration
+        if st.button("Save Risk Settings", type="primary"):
+            config_manager.update_config('risk',
+                var_confidence_levels=new_var_levels,
+                var_methods=new_var_methods,
+                var_lookback_days=new_var_lookback,
+                mc_simulations=new_mc_simulations,
+                mc_time_horizon=new_mc_horizon,
+                benchmark_symbol=new_benchmark,
+                risk_free_rate=new_risk_free_rate,
+                stress_shock_sizes=new_shock_sizes
+            )
+            config_manager.save_config()
+            st.success("Risk settings saved successfully!")
+    
+    with tab4:
+        st.markdown("### User Interface Configuration")
+        st.markdown("Customize the appearance and behavior of the application.")
+        
+        ui_config = config_manager.get_config('ui')
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Theme and Styling")
+            
+            new_theme = st.selectbox(
+                "Theme",
+                ["light", "dark", "auto"],
+                index=["light", "dark", "auto"].index(ui_config.theme),
+                help="Application theme"
+            )
+            
+            new_color_scheme = st.selectbox(
+                "Color Scheme",
+                ["blue", "green", "red", "purple", "orange"],
+                index=["blue", "green", "red", "purple", "orange"].index(ui_config.color_scheme),
+                help="Primary color scheme"
+            )
+            
+            new_chart_style = st.selectbox(
+                "Chart Style",
+                ["plotly_white", "plotly", "plotly_dark", "ggplot2"],
+                index=["plotly_white", "plotly", "plotly_dark", "ggplot2"].index(ui_config.chart_style),
+                help="Default chart styling"
+            )
+            
+            st.markdown("#### Layout Settings")
+            
+            new_sidebar_width = st.slider(
+                "Sidebar Width",
+                min_value=200,
+                max_value=500,
+                value=ui_config.sidebar_width,
+                step=10,
+                help="Width of the navigation sidebar"
+            )
+            
+            new_main_content = st.selectbox(
+                "Main Content Layout",
+                ["wide", "centered"],
+                index=["wide", "centered"].index(ui_config.main_content_width),
+                help="Layout for main content area"
+            )
+            
+            new_show_tooltips = st.checkbox(
+                "Show Tooltips",
+                value=ui_config.show_tooltips,
+                help="Display helpful tooltips"
+            )
+            
+            new_show_help = st.checkbox(
+                "Show Help Text",
+                value=ui_config.show_help_text,
+                help="Display contextual help text"
+            )
+        
+        with col2:
+            st.markdown("#### Chart Settings")
+            
+            new_chart_height = st.slider(
+                "Default Chart Height",
+                min_value=300,
+                max_value=800,
+                value=ui_config.default_chart_height,
+                step=50,
+                help="Default height for charts in pixels"
+            )
+            
+            new_interactive_charts = st.checkbox(
+                "Interactive Charts",
+                value=ui_config.interactive_charts,
+                help="Enable interactive chart features"
+            )
+            
+            new_show_grid = st.checkbox(
+                "Show Grid Lines",
+                value=ui_config.show_grid,
+                help="Display grid lines on charts"
+            )
+            
+            new_show_legend = st.checkbox(
+                "Show Chart Legends",
+                value=ui_config.show_legend,
+                help="Display legends on charts"
+            )
+            
+            st.markdown("#### Data Display")
+            
+            new_max_table_rows = st.number_input(
+                "Maximum Table Rows",
+                min_value=100,
+                max_value=10000,
+                value=ui_config.max_table_rows,
+                step=100,
+                help="Maximum rows to display in data tables"
+            )
+            
+            new_decimal_places = st.number_input(
+                "Decimal Places",
+                min_value=0,
+                max_value=10,
+                value=ui_config.decimal_places,
+                help="Number of decimal places for numeric display"
+            )
+            
+            new_currency_symbol = st.text_input(
+                "Currency Symbol",
+                value=ui_config.currency_symbol,
+                help="Symbol to use for currency display"
+            )
+        
+        # Update UI configuration
+        if st.button("Save UI Settings", type="primary"):
+            config_manager.update_config('ui',
+                theme=new_theme,
+                color_scheme=new_color_scheme,
+                chart_style=new_chart_style,
+                sidebar_width=new_sidebar_width,
+                main_content_width=new_main_content,
+                show_tooltips=new_show_tooltips,
+                show_help_text=new_show_help,
+                default_chart_height=new_chart_height,
+                interactive_charts=new_interactive_charts,
+                show_grid=new_show_grid,
+                show_legend=new_show_legend,
+                max_table_rows=new_max_table_rows,
+                decimal_places=new_decimal_places,
+                currency_symbol=new_currency_symbol
+            )
+            config_manager.save_config()
+            st.success("UI settings saved successfully!")
+            st.info("Some UI changes may require a page refresh to take effect.")
+    
+    with tab5:
+        st.markdown("### API Configuration")
+        st.markdown("Configure external API connections and settings.")
+        
+        api_config = config_manager.get_config('api')
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### API Keys")
+            st.info("API keys are loaded from environment variables for security.")
+            
+            # Display API key status
+            api_status = [
+                ("Alpha Vantage", api_config.alpha_vantage_key, "ALPHA_VANTAGE_API_KEY"),
+                ("Quandl", api_config.quandl_key, "QUANDL_API_KEY"),
+                ("FRED", api_config.fred_key, "FRED_API_KEY"),
+                ("News API", api_config.news_api_key, "NEWS_API_KEY")
+            ]
+            
+            for name, key, env_var in api_status:
+                status = "✅ Configured" if key else "❌ Not Set"
+                color = "success" if key else "error"
+                st.write(f"**{name}:** {status}")
+                
+                if not key:
+                    st.caption(f"Set environment variable: {env_var}")
+            
+            st.markdown("#### Rate Limiting")
+            
+            new_requests_per_minute = st.number_input(
+                "Requests per Minute",
+                min_value=1,
+                max_value=300,
+                value=api_config.requests_per_minute,
+                help="Maximum API requests per minute"
+            )
+            
+            new_retry_attempts = st.number_input(
+                "Retry Attempts",
+                min_value=1,
+                max_value=10,
+                value=api_config.retry_attempts,
+                help="Number of retry attempts for failed requests"
+            )
+            
+            new_retry_delay = st.slider(
+                "Retry Delay (seconds)",
+                min_value=0.1,
+                max_value=5.0,
+                value=api_config.retry_delay,
+                step=0.1,
+                help="Delay between retry attempts"
+            )
+        
+        with col2:
+            st.markdown("#### Timeout Settings")
+            
+            new_connection_timeout = st.number_input(
+                "Connection Timeout (seconds)",
+                min_value=1,
+                max_value=60,
+                value=api_config.connection_timeout,
+                help="Timeout for establishing connections"
+            )
+            
+            new_read_timeout = st.number_input(
+                "Read Timeout (seconds)",
+                min_value=1,
+                max_value=120,
+                value=api_config.read_timeout,
+                help="Timeout for reading responses"
+            )
+            
+            st.markdown("#### Cache Settings")
+            
+            new_enable_cache = st.checkbox(
+                "Enable API Cache",
+                value=api_config.enable_cache,
+                help="Cache API responses to reduce requests"
+            )
+            
+            if new_enable_cache:
+                new_cache_directory = st.text_input(
+                    "Cache Directory",
+                    value=api_config.cache_directory,
+                    help="Directory to store cached responses"
+                )
+                
+                new_cache_expiry = st.number_input(
+                    "Cache Expiry (hours)",
+                    min_value=1,
+                    max_value=168,
+                    value=api_config.cache_expiry_hours,
+                    help="Time before cached data expires"
+                )
+            else:
+                new_cache_directory = api_config.cache_directory
+                new_cache_expiry = api_config.cache_expiry_hours
+            
+            st.markdown("#### Data Quality")
+            
+            new_validate_data = st.checkbox(
+                "Validate API Data",
+                value=api_config.validate_data,
+                help="Validate data quality from API responses"
+            )
+            
+            if new_validate_data:
+                new_min_quality_score = st.slider(
+                    "Minimum Quality Score",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=api_config.min_data_quality_score,
+                    step=0.1,
+                    help="Minimum acceptable data quality score"
+                )
+            else:
+                new_min_quality_score = api_config.min_data_quality_score
+            
+            new_auto_fallback = st.checkbox(
+                "Auto Fallback",
+                value=api_config.auto_fallback,
+                help="Automatically fallback to backup APIs"
+            )
+        
+        # Update API configuration
+        if st.button("Save API Settings", type="primary"):
+            config_manager.update_config('api',
+                requests_per_minute=new_requests_per_minute,
+                retry_attempts=new_retry_attempts,
+                retry_delay=new_retry_delay,
+                connection_timeout=new_connection_timeout,
+                read_timeout=new_read_timeout,
+                enable_cache=new_enable_cache,
+                cache_directory=new_cache_directory,
+                cache_expiry_hours=new_cache_expiry,
+                validate_data=new_validate_data,
+                min_data_quality_score=new_min_quality_score,
+                auto_fallback=new_auto_fallback
+            )
+            config_manager.save_config()
+            st.success("API settings saved successfully!")
+    
+    with tab6:
+        st.markdown("### System Configuration")
+        st.markdown("Configure system-wide settings and performance parameters.")
+        
+        system_config = config_manager.get_config('system')
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Logging")
+            
+            new_log_level = st.selectbox(
+                "Log Level",
+                ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                index=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"].index(system_config.log_level),
+                help="Minimum log level to record"
+            )
+            
+            new_log_rotation = st.checkbox(
+                "Log Rotation",
+                value=system_config.log_rotation,
+                help="Automatically rotate log files"
+            )
+            
+            if new_log_rotation:
+                new_max_log_size = st.text_input(
+                    "Maximum Log Size",
+                    value=system_config.max_log_size,
+                    help="Maximum size before log rotation (e.g., 10MB)"
+                )
+            else:
+                new_max_log_size = system_config.max_log_size
+            
+            st.markdown("#### Performance")
+            
+            new_max_workers = st.number_input(
+                "Maximum Workers",
+                min_value=1,
+                max_value=16,
+                value=system_config.max_workers,
+                help="Maximum number of worker threads"
+            )
+            
+            new_memory_limit = st.text_input(
+                "Memory Limit",
+                value=system_config.memory_limit,
+                help="Maximum memory usage (e.g., 4GB)"
+            )
+            
+            new_enable_gpu = st.checkbox(
+                "Enable GPU",
+                value=system_config.enable_gpu,
+                help="Use GPU acceleration if available"
+            )
+        
+        with col2:
+            st.markdown("#### Storage")
+            
+            new_data_dir = st.text_input(
+                "Data Directory",
+                value=system_config.data_directory,
+                help="Directory for storing data files"
+            )
+            
+            new_models_dir = st.text_input(
+                "Models Directory",
+                value=system_config.models_directory,
+                help="Directory for storing trained models"
+            )
+            
+            new_exports_dir = st.text_input(
+                "Exports Directory",
+                value=system_config.exports_directory,
+                help="Directory for exported files"
+            )
+            
+            st.markdown("#### Security")
+            
+            new_enable_auth = st.checkbox(
+                "Enable Authentication",
+                value=system_config.enable_auth,
+                help="Require user authentication"
+            )
+            
+            if new_enable_auth:
+                new_session_timeout = st.number_input(
+                    "Session Timeout (seconds)",
+                    min_value=300,
+                    max_value=86400,
+                    value=system_config.session_timeout,
+                    help="User session timeout duration"
+                )
+            else:
+                new_session_timeout = system_config.session_timeout
+            
+            st.markdown("#### Updates")
+            
+            new_check_updates = st.checkbox(
+                "Check for Updates",
+                value=system_config.check_updates,
+                help="Check for system updates"
+            )
+            
+            new_auto_update = st.checkbox(
+                "Auto Update",
+                value=system_config.auto_update,
+                help="Automatically install updates"
+            )
+        
+        # Update system configuration
+        if st.button("Save System Settings", type="primary"):
+            config_manager.update_config('system',
+                log_level=new_log_level,
+                log_rotation=new_log_rotation,
+                max_log_size=new_max_log_size,
+                max_workers=new_max_workers,
+                memory_limit=new_memory_limit,
+                enable_gpu=new_enable_gpu,
+                data_directory=new_data_dir,
+                models_directory=new_models_dir,
+                exports_directory=new_exports_dir,
+                enable_auth=new_enable_auth,
+                session_timeout=new_session_timeout,
+                check_updates=new_check_updates,
+                auto_update=new_auto_update
+            )
+            config_manager.save_config()
+            st.success("System settings saved successfully!")
+    
+    # Configuration validation and summary
+    st.markdown("---")
+    st.markdown("### Configuration Status")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Validation results
+        validation = config_manager.validate_config()
+        
+        if validation['valid']:
+            st.success("✅ Configuration is valid")
+        else:
+            st.error("❌ Configuration has errors")
+        
+        if validation['warnings']:
+            st.warning("⚠️ Configuration warnings:")
+            for warning in validation['warnings']:
+                st.write(f"• {warning}")
+        
+        if validation['errors']:
+            st.error("🚨 Configuration errors:")
+            for error in validation['errors']:
+                st.write(f"• {error}")
+    
+    with col2:
+        # Configuration summary
+        summary = config_manager.get_summary()
+        
+        st.info("📊 Configuration Summary:")
+        st.write(f"• **Config File:** {summary['config_file']}")
+        st.write(f"• **Total Sections:** {len(summary['sections'])}")
+        st.write(f"• **API Keys Configured:** {summary['api_keys_configured']}/4")
+        
+        if st.button("Reset to Defaults", key="reset_all_config"):
+            if st.confirm("Are you sure you want to reset all configuration to defaults?"):
+                config_manager.reset_to_defaults()
+                config_manager.save_config()
+                st.success("Configuration reset to defaults!")
+                st.rerun()
+        
+        if st.button("Export Configuration", key="export_config"):
+            st.download_button(
+                label="Download Config File",
+                data=open(config_manager.config_path, 'r').read(),
+                file_name="portfolio_config.yaml",
+                mime="text/yaml"
+            )
+
+
 def page_help():
     """Help and documentation page."""
     st.markdown('<div class="main-header">Help & Documentation</div>', unsafe_allow_html=True)
@@ -6596,6 +7923,10 @@ def main():
         page_performance_reporting()
     elif current_page == "market":
         page_market_dashboard()
+    elif current_page == "ensemble":
+        page_ensemble_models()
+    elif current_page == "settings":
+        page_advanced_settings()
     elif current_page == "help":
         page_help()
     
