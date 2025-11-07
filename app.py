@@ -564,100 +564,389 @@ def page_individual_forecasting():
         st.warning("Please load data first from the Home page.")
         return
     
-    st.markdown("### Configure Forecasting")
-    
     data = st.session_state.data
     summary = get_data_summary(data)
     
-    col1, col2 = st.columns(2)
+    # Create tabs for different forecasting approaches
+    tab1, tab2 = st.tabs(["🎯 Quick Forecast", "⚙️ Advanced Configuration"])
     
-    with col1:
-        selected_ticker = st.selectbox("Select Ticker:", summary['tickers'])
-        forecast_steps = st.slider("Forecast Steps:", 5, 50, 20)
-    
-    with col2:
-        selected_models = st.multiselect(
-            "Select Models:", 
-            ['Naive', 'Moving Average', 'ARIMA', 'Deep Learning'],
-            default=['Naive', 'Moving Average']
-        )
-        test_size = st.slider("Test Size (%):", 10, 50, 20)
-    
-    if st.button("Generate Forecasts", type="primary"):
-        with st.spinner("Generating forecasts..."):
-            # Get data
-            ticker_data = get_ticker_data(data, selected_ticker, 'close')
-            
-            # Split data
-            split_point = int(len(ticker_data) * (1 - test_size/100))
-            train_data = ticker_data.iloc[:split_point]
-            test_data = ticker_data.iloc[split_point:]
-            
-            forecasts = {}
-            metrics = {}
-            
-            # Generate forecasts based on selected models
-            if 'Naive' in selected_models:
-                try:
-                    naive_pred = naive_forecast(train_data, forecast_steps=len(test_data))
-                    forecasts['Naive'] = naive_pred
-                    metrics['Naive'] = calculate_all_metrics(test_data.values, naive_pred.values)
-                except Exception as e:
-                    st.error(f"Naive forecast error: {e}")
-            
-            if 'Moving Average' in selected_models:
-                try:
-                    ma_pred = moving_average_forecast(train_data, window=10, forecast_steps=len(test_data))
-                    forecasts['Moving Average'] = ma_pred
-                    metrics['Moving Average'] = calculate_all_metrics(test_data.values, ma_pred.values)
-                except Exception as e:
-                    st.error(f"Moving Average forecast error: {e}")
-            
-            if 'ARIMA' in selected_models:
-                try:
-                    arima_pred = arima_forecast(train_data, order=(1,1,1), forecast_steps=len(test_data))
-                    forecasts['ARIMA'] = arima_pred
-                    metrics['ARIMA'] = calculate_all_metrics(test_data.values, arima_pred.values)
-                except Exception as e:
-                    st.error(f"ARIMA forecast error: {e}")
-            
-            if 'Deep Learning' in selected_models:
-                try:
-                    # Simple deep learning forecast (using mock implementation)
-                    dl_forecaster = create_deep_learning_forecaster()
-                    dl_data = pd.DataFrame({'close': ticker_data}).reset_index()
-                    dl_data['time_idx'] = range(len(dl_data))
-                    dl_data['ticker'] = selected_ticker
-                    
-                    dl_pred, _ = dl_forecaster.fit_and_predict_deepar(dl_data, 'close', max_epochs=1)
-                    
-                    # Align with test data
-                    if len(dl_pred) >= len(test_data):
-                        dl_pred_aligned = pd.Series(dl_pred[-len(test_data):], index=test_data.index)
-                        forecasts['Deep Learning'] = dl_pred_aligned
-                        metrics['Deep Learning'] = calculate_all_metrics(test_data.values, dl_pred_aligned.values)
-                except Exception as e:
-                    st.error(f"Deep Learning forecast error: {e}")
-            
-            if forecasts:
-                # Display results
-                st.markdown("### Forecast Results")
+    with tab1:
+        st.markdown("### Quick Forecasting Setup")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            selected_ticker = st.selectbox("Select Ticker:", summary['tickers'], key="quick_ticker")
+            forecast_steps = st.slider("Forecast Steps:", 5, 50, 20, key="quick_steps")
+        
+        with col2:
+            selected_models = st.multiselect(
+                "Select Models:", 
+                ['Naive', 'Moving Average', 'ARIMA', 'Deep Learning'],
+                default=['Naive', 'Moving Average'],
+                key="quick_models"
+            )
+            test_size = st.slider("Test Size (%):", 10, 50, 20, key="quick_test")
+        
+        if st.button("Generate Quick Forecasts", type="primary", key="quick_forecast"):
+            with st.spinner("Generating forecasts..."):
+                # Get data
+                ticker_data = get_ticker_data(data, selected_ticker, 'close')
                 
-                # Plot
-                fig = create_forecast_plot(test_data, forecasts, f"{selected_ticker} Forecast Comparison")
-                st.plotly_chart(fig, width='stretch')
+                # Split data
+                split_point = int(len(ticker_data) * (1 - test_size/100))
+                train_data = ticker_data.iloc[:split_point]
+                test_data = ticker_data.iloc[split_point:]
                 
-                # Metrics table
-                if metrics:
-                    st.markdown("### Performance Metrics")
+                forecasts = {}
+                metrics = {}
+                errors = []
+                
+                # Generate forecasts based on selected models
+                if 'Naive' in selected_models:
+                    try:
+                        naive_pred = naive_forecast(train_data, forecast_steps=len(test_data))
+                        forecasts['Naive'] = naive_pred
+                        metrics['Naive'] = calculate_all_metrics(test_data.values, naive_pred.values)
+                    except Exception as e:
+                        errors.append(f"Naive forecast error: {str(e)}")
+                
+                if 'Moving Average' in selected_models:
+                    try:
+                        ma_pred = moving_average_forecast(train_data, window=10, forecast_steps=len(test_data))
+                        forecasts['Moving Average'] = ma_pred
+                        metrics['Moving Average'] = calculate_all_metrics(test_data.values, ma_pred.values)
+                    except Exception as e:
+                        errors.append(f"Moving Average forecast error: {str(e)}")
+                
+                if 'ARIMA' in selected_models:
+                    try:
+                        arima_pred = arima_forecast(train_data, order=(1,1,1), forecast_steps=len(test_data))
+                        forecasts['ARIMA'] = arima_pred
+                        metrics['ARIMA'] = calculate_all_metrics(test_data.values, arima_pred.values)
+                    except Exception as e:
+                        errors.append(f"ARIMA forecast error: {str(e)}")
+                
+                if 'Deep Learning' in selected_models:
+                    try:
+                        dl_forecaster = create_deep_learning_forecaster()
+                        dl_data = pd.DataFrame({'close': ticker_data}).reset_index()
+                        dl_data['time_idx'] = range(len(dl_data))
+                        dl_data['ticker'] = selected_ticker
+                        
+                        dl_pred, _ = dl_forecaster.fit_and_predict_deepar(dl_data, 'close', max_epochs=1)
+                        
+                        if len(dl_pred) >= len(test_data):
+                            dl_pred_aligned = pd.Series(dl_pred[-len(test_data):], index=test_data.index)
+                            forecasts['Deep Learning'] = dl_pred_aligned
+                            metrics['Deep Learning'] = calculate_all_metrics(test_data.values, dl_pred_aligned.values)
+                    except Exception as e:
+                        errors.append(f"Deep Learning forecast error: {str(e)}")
+                
+                # Display errors if any
+                for error in errors:
+                    st.error(error)
+                
+                if forecasts:
+                    # Display results
+                    st.markdown("### Forecast Results")
+                    
+                    # Plot
+                    fig = create_forecast_plot(test_data, forecasts, f"{selected_ticker} Forecast Comparison")
+                    st.plotly_chart(fig, width='stretch')
+                    
+                    # Metrics table
+                    if metrics:
+                        st.markdown("### Performance Metrics")
+                        metrics_df = pd.DataFrame(metrics).T
+                        st.dataframe(metrics_df.round(4))
+                        
+                        # Best model
+                        best_model = metrics_df['RMSE'].idxmin()
+                        st.success(f"🏆 Best Model: **{best_model}** (RMSE: {metrics_df.loc[best_model, 'RMSE']:.4f})")
+                        
+                        # Model insights
+                        st.markdown("### Model Insights")
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("#### Accuracy Ranking")
+                            ranking = metrics_df.sort_values('RMSE')[['RMSE', 'MAPE']].round(4)
+                            for i, (model, row) in enumerate(ranking.iterrows(), 1):
+                                st.write(f"{i}. **{model}**: RMSE {row['RMSE']:.4f}, MAPE {row['MAPE']:.2f}%")
+                        
+                        with col2:
+                            st.markdown("#### Performance Summary")
+                            avg_rmse = metrics_df['RMSE'].mean()
+                            best_rmse = metrics_df['RMSE'].min()
+                            worst_rmse = metrics_df['RMSE'].max()
+                            
+                            st.metric("Average RMSE", f"{avg_rmse:.4f}")
+                            st.metric("Best RMSE", f"{best_rmse:.4f}")
+                            st.metric("RMSE Range", f"{worst_rmse - best_rmse:.4f}")
+                else:
+                    st.error("No forecasts were generated successfully. Please check your model selections and try again.")
+    
+    with tab2:
+        st.markdown("### Advanced Forecasting Configuration")
+        
+        # Model selection with parameters
+        st.markdown("#### Model Selection & Parameters")
+        
+        # Baseline Models Section
+        st.markdown("##### Baseline Models")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            use_naive = st.checkbox("Naive Forecast", value=True, key="adv_naive")
+            
+            use_ma = st.checkbox("Moving Average", value=True, key="adv_ma")
+            if use_ma:
+                ma_window = st.slider("MA Window:", 3, 50, 10, key="adv_ma_window")
+                ma_multiple = st.checkbox("Multiple MA Windows", key="adv_ma_multi")
+                if ma_multiple:
+                    ma_windows = st.multiselect("MA Windows:", [5, 10, 15, 20, 30], 
+                                               default=[5, 10, 20], key="adv_ma_windows")
+        
+        with col2:
+            use_arima = st.checkbox("ARIMA", value=True, key="adv_arima")
+            if use_arima:
+                arima_p = st.slider("ARIMA p (AR order):", 0, 5, 1, key="adv_arima_p")
+                arima_d = st.slider("ARIMA d (Differencing):", 0, 2, 1, key="adv_arima_d")
+                arima_q = st.slider("ARIMA q (MA order):", 0, 5, 1, key="adv_arima_q")
+                auto_arima = st.checkbox("Auto-select ARIMA parameters", key="adv_auto_arima")
+        
+        # Advanced Models Section
+        st.markdown("##### Advanced Models")
+        
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            use_seasonal = st.checkbox("Seasonal Naive", key="adv_seasonal")
+            if use_seasonal:
+                seasonal_period = st.slider("Seasonal Period:", 5, 50, 12, key="adv_seasonal_period")
+        
+        with col4:
+            use_dl = st.checkbox("Deep Learning Models", key="adv_dl")
+            if use_dl:
+                dl_epochs = st.slider("Training Epochs:", 1, 10, 3, key="adv_dl_epochs")
+                dl_models = st.multiselect("DL Models:", ['DeepAR', 'TFT'], 
+                                         default=['DeepAR'], key="adv_dl_models")
+        
+        # Data Configuration
+        st.markdown("#### Data Configuration")
+        
+        col5, col6 = st.columns(2)
+        
+        with col5:
+            adv_ticker = st.selectbox("Select Ticker:", summary['tickers'], key="adv_ticker")
+            adv_column = st.selectbox("Data Column:", ['close', 'open', 'high', 'low'], 
+                                    index=0, key="adv_column")
+        
+        with col6:
+            adv_test_size = st.slider("Test Size (%):", 5, 50, 20, key="adv_test_size")
+            adv_forecast_steps = st.slider("Forecast Horizon:", 5, 100, 30, key="adv_forecast_steps")
+        
+        # Additional Options
+        st.markdown("#### Additional Options")
+        
+        col7, col8 = st.columns(2)
+        
+        with col7:
+            confidence_intervals = st.checkbox("Show Confidence Intervals", key="adv_ci")
+            if confidence_intervals:
+                confidence_level = st.slider("Confidence Level (%):", 80, 99, 95, key="adv_ci_level")
+        
+        with col8:
+            cross_validation = st.checkbox("Time Series Cross-Validation", key="adv_cv")
+            if cross_validation:
+                cv_folds = st.slider("CV Folds:", 3, 10, 5, key="adv_cv_folds")
+        
+        # Advanced Forecast Button
+        if st.button("Generate Advanced Forecasts", type="primary", key="adv_forecast"):
+            with st.spinner("Running advanced forecasting analysis..."):
+                # Get data
+                ticker_data = get_ticker_data(data, adv_ticker, adv_column)
+                
+                # Split data
+                split_point = int(len(ticker_data) * (1 - adv_test_size/100))
+                train_data = ticker_data.iloc[:split_point]
+                test_data = ticker_data.iloc[split_point:]
+                
+                forecasts = {}
+                metrics = {}
+                model_details = {}
+                errors = []
+                
+                st.markdown("### Advanced Forecast Results")
+                
+                # Progress tracking
+                models_to_run = []
+                if use_naive: models_to_run.append("Naive")
+                if use_ma: 
+                    if ma_multiple and ma_windows:
+                        models_to_run.extend([f"MA_{w}" for w in ma_windows])
+                    else:
+                        models_to_run.append(f"MA_{ma_window}")
+                if use_arima: models_to_run.append("ARIMA")
+                if use_seasonal: models_to_run.append("Seasonal")
+                if use_dl and dl_models: models_to_run.extend(dl_models)
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, model in enumerate(models_to_run):
+                    status_text.text(f"Running {model}...")
+                    
+                    try:
+                        if model == "Naive":
+                            pred = naive_forecast(train_data, forecast_steps=len(test_data))
+                            forecasts[model] = pred
+                            metrics[model] = calculate_all_metrics(test_data.values, pred.values)
+                            model_details[model] = {"type": "baseline", "params": {}}
+                        
+                        elif model.startswith("MA_"):
+                            window = int(model.split("_")[1])
+                            pred = moving_average_forecast(train_data, window=window, forecast_steps=len(test_data))
+                            forecasts[model] = pred
+                            metrics[model] = calculate_all_metrics(test_data.values, pred.values)
+                            model_details[model] = {"type": "baseline", "params": {"window": window}}
+                        
+                        elif model == "ARIMA":
+                            if auto_arima:
+                                # Simple auto-selection (try a few common orders)
+                                best_aic = float('inf')
+                                best_order = (1, 1, 1)
+                                for p in [0, 1, 2]:
+                                    for d in [0, 1]:
+                                        for q in [0, 1, 2]:
+                                            try:
+                                                temp_pred = arima_forecast(train_data, order=(p,d,q), forecast_steps=len(test_data))
+                                                # Simple AIC approximation
+                                                temp_metrics = calculate_all_metrics(test_data.values, temp_pred.values)
+                                                if temp_metrics['RMSE'] < best_aic:
+                                                    best_aic = temp_metrics['RMSE']
+                                                    best_order = (p, d, q)
+                                            except:
+                                                continue
+                                order = best_order
+                            else:
+                                order = (arima_p, arima_d, arima_q)
+                            
+                            pred = arima_forecast(train_data, order=order, forecast_steps=len(test_data))
+                            forecasts[model] = pred
+                            metrics[model] = calculate_all_metrics(test_data.values, pred.values)
+                            model_details[model] = {"type": "baseline", "params": {"order": order}}
+                        
+                        elif model == "Seasonal":
+                            # Use seasonal naive (repeat pattern from seasonal_period ago)
+                            if len(train_data) >= seasonal_period:
+                                seasonal_pattern = train_data.iloc[-seasonal_period:].values
+                                pred_values = np.tile(seasonal_pattern, int(np.ceil(len(test_data) / seasonal_period)))[:len(test_data)]
+                                pred = pd.Series(pred_values, index=test_data.index)
+                                forecasts[model] = pred
+                                metrics[model] = calculate_all_metrics(test_data.values, pred.values)
+                                model_details[model] = {"type": "seasonal", "params": {"period": seasonal_period}}
+                        
+                        elif model in ['DeepAR', 'TFT']:
+                            dl_forecaster = create_deep_learning_forecaster()
+                            dl_data = pd.DataFrame({adv_column: ticker_data}).reset_index()
+                            dl_data['time_idx'] = range(len(dl_data))
+                            dl_data['ticker'] = adv_ticker
+                            
+                            if model == 'DeepAR':
+                                pred_values, metadata = dl_forecaster.fit_and_predict_deepar(
+                                    dl_data, adv_column, max_epochs=dl_epochs
+                                )
+                            else:  # TFT
+                                pred_values, metadata = dl_forecaster.fit_and_predict_tft(
+                                    dl_data, adv_column, max_epochs=dl_epochs
+                                )
+                            
+                            if len(pred_values) >= len(test_data):
+                                pred = pd.Series(pred_values[-len(test_data):], index=test_data.index)
+                                forecasts[model] = pred
+                                metrics[model] = calculate_all_metrics(test_data.values, pred.values)
+                                model_details[model] = {"type": "deep_learning", "params": {"epochs": dl_epochs}, "metadata": metadata}
+                    
+                    except Exception as e:
+                        errors.append(f"{model} forecast error: {str(e)}")
+                    
+                    progress_bar.progress((i + 1) / len(models_to_run))
+                
+                status_text.text("Analysis complete!")
+                
+                # Display errors if any
+                if errors:
+                    st.markdown("#### Warnings")
+                    for error in errors:
+                        st.warning(error)
+                
+                if forecasts:
+                    # Plot results
+                    fig = create_forecast_plot(test_data, forecasts, f"{adv_ticker} Advanced Forecast Comparison")
+                    st.plotly_chart(fig, width='stretch')
+                    
+                    # Detailed metrics
+                    st.markdown("#### Detailed Performance Analysis")
+                    
                     metrics_df = pd.DataFrame(metrics).T
+                    
+                    # Add model type information
+                    metrics_df['Model Type'] = [model_details[model]['type'] for model in metrics_df.index]
+                    
+                    # Reorder columns
+                    cols = ['Model Type'] + [col for col in metrics_df.columns if col != 'Model Type']
+                    metrics_df = metrics_df[cols]
+                    
                     st.dataframe(metrics_df.round(4))
                     
-                    # Best model
-                    best_model = metrics_df['RMSE'].idxmin()
-                    st.success(f"🏆 Best Model: **{best_model}** (RMSE: {metrics_df.loc[best_model, 'RMSE']:.4f})")
-            else:
-                st.error("No forecasts were generated successfully.")
+                    # Best models by category
+                    st.markdown("#### Best Models by Category")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.markdown("**Overall Best**")
+                        overall_best = metrics_df['RMSE'].idxmin()
+                        st.success(f"{overall_best}")
+                        st.write(f"RMSE: {metrics_df.loc[overall_best, 'RMSE']:.4f}")
+                    
+                    with col2:
+                        baseline_models = metrics_df[metrics_df['Model Type'] == 'baseline']
+                        if not baseline_models.empty:
+                            st.markdown("**Best Baseline**")
+                            baseline_best = baseline_models['RMSE'].idxmin()
+                            st.info(f"{baseline_best}")
+                            st.write(f"RMSE: {baseline_models.loc[baseline_best, 'RMSE']:.4f}")
+                    
+                    with col3:
+                        dl_models_df = metrics_df[metrics_df['Model Type'] == 'deep_learning']
+                        if not dl_models_df.empty:
+                            st.markdown("**Best Deep Learning**")
+                            dl_best = dl_models_df['RMSE'].idxmin()
+                            st.info(f"{dl_best}")
+                            st.write(f"RMSE: {dl_models_df.loc[dl_best, 'RMSE']:.4f}")
+                    
+                    # Model parameters summary
+                    st.markdown("#### Model Configuration Summary")
+                    config_data = []
+                    for model, details in model_details.items():
+                        if model in metrics_df.index:
+                            config_data.append({
+                                'Model': model,
+                                'Type': details['type'],
+                                'Parameters': str(details['params']),
+                                'RMSE': f"{metrics_df.loc[model, 'RMSE']:.4f}",
+                                'MAPE': f"{metrics_df.loc[model, 'MAPE']:.2f}%"
+                            })
+                    
+                    config_df = pd.DataFrame(config_data)
+                    st.dataframe(config_df, hide_index=True)
+                    
+                else:
+                    st.error("No forecasts were generated successfully. Please check your configuration and try again.")
 
 
 def page_model_comparison():
