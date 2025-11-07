@@ -27,6 +27,9 @@ try:
     from deep_learning_model import create_deep_learning_forecaster
     from run_backtest import SimpleBacktester
     from interactive_plotting import InteractivePlotter, quick_line_plot, create_dashboard_plot
+    
+    # Import scientific computing for optimization
+    from scipy.optimize import minimize
 except ImportError as e:
     st.error(f"Error importing project modules: {e}")
     st.error("Please ensure all required files are in the correct directories")
@@ -2504,7 +2507,623 @@ def page_deep_learning():
 def page_portfolio_optimization():
     """Portfolio optimization page."""
     st.markdown('<div class="main-header">Portfolio Optimization</div>', unsafe_allow_html=True)
-    st.info("🚧 This feature will be implemented in the next phase.")
+    
+    if 'data' not in st.session_state or st.session_state.data is None:
+        st.warning("Please load data first from the Home page.")
+        return
+    
+    data = st.session_state.data
+    summary = get_data_summary(data)
+    
+    st.markdown("""
+    Optimize portfolio weights using modern portfolio theory, risk parity, and forecast-based allocation strategies 
+    to maximize returns while managing risk.
+    """)
+    
+    # Create tabs for different optimization approaches
+    tab1, tab2, tab3, tab4 = st.tabs(["⚖️ Modern Portfolio Theory", "🎯 Risk Parity", "🔮 Forecast-Based", "📊 Portfolio Analysis"])
+    
+    with tab1:
+        st.markdown("### Modern Portfolio Theory (MPT)")
+        st.markdown("Optimize portfolio weights to maximize Sharpe ratio or minimize volatility.")
+        
+        # Asset selection
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            mpt_assets = st.multiselect(
+                "Select Portfolio Assets:",
+                summary['tickers'],
+                default=summary['tickers'][:4],
+                key="mpt_assets"
+            )
+            
+            mpt_objective = st.selectbox(
+                "Optimization Objective:",
+                ['Max Sharpe Ratio', 'Min Volatility', 'Max Return'],
+                key="mpt_objective"
+            )
+        
+        with col2:
+            mpt_lookback = st.slider(
+                "Lookback Period (days):",
+                30, 250, 120,
+                key="mpt_lookback",
+                help="Historical period for calculating returns and covariance"
+            )
+            
+            mpt_target_return = st.slider(
+                "Target Return (annual %):",
+                5.0, 25.0, 12.0,
+                key="mpt_target",
+                help="Used for minimum volatility with target return"
+            )
+        
+        # Risk constraints
+        with st.expander("Risk Constraints"):
+            max_weight = st.slider(
+                "Maximum Asset Weight:",
+                0.1, 1.0, 0.4,
+                key="mpt_max_weight"
+            )
+            
+            min_weight = st.slider(
+                "Minimum Asset Weight:",
+                0.0, 0.2, 0.05,
+                key="mpt_min_weight"
+            )
+            
+            risk_free_rate = st.slider(
+                "Risk-Free Rate (%):",
+                0.0, 5.0, 2.0,
+                key="mpt_rf_rate"
+            ) / 100
+        
+        if len(mpt_assets) >= 2:
+            if st.button("Optimize Portfolio", type="primary", key="run_mpt"):
+                with st.spinner("Running portfolio optimization..."):
+                    try:
+                        # Get returns data
+                        returns_data = {}
+                        for asset in mpt_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            asset_returns = asset_prices.pct_change().dropna()
+                            returns_data[asset] = asset_returns.tail(mpt_lookback)
+                        
+                        returns_df = pd.DataFrame(returns_data).dropna()
+                        
+                        if len(returns_df) < 30:
+                            st.error("Insufficient data for optimization. Please select more assets or increase lookback period.")
+                            return
+                        
+                        # Calculate expected returns and covariance matrix
+                        expected_returns = returns_df.mean() * 252  # Annualized
+                        cov_matrix = returns_df.cov() * 252  # Annualized
+                        
+                        # Simple portfolio optimization using scipy
+                        from scipy.optimize import minimize
+                        
+                        n_assets = len(mpt_assets)
+                        
+                        def portfolio_stats(weights, returns, cov_matrix, risk_free_rate):
+                            """Calculate portfolio statistics."""
+                            portfolio_return = np.dot(weights, returns)
+                            portfolio_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                            sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_vol if portfolio_vol > 0 else 0
+                            return portfolio_return, portfolio_vol, sharpe_ratio
+                        
+                        def negative_sharpe(weights):
+                            """Objective function for maximizing Sharpe ratio."""
+                            _, _, sharpe = portfolio_stats(weights, expected_returns, cov_matrix, risk_free_rate)
+                            return -sharpe
+                        
+                        def portfolio_volatility(weights):
+                            """Objective function for minimizing volatility."""
+                            _, vol, _ = portfolio_stats(weights, expected_returns, cov_matrix, risk_free_rate)
+                            return vol
+                        
+                        def negative_return(weights):
+                            """Objective function for maximizing return."""
+                            ret, _, _ = portfolio_stats(weights, expected_returns, cov_matrix, risk_free_rate)
+                            return -ret
+                        
+                        # Constraints and bounds
+                        constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]  # Weights sum to 1
+                        bounds = tuple((min_weight, max_weight) for _ in range(n_assets))
+                        
+                        # Initial guess (equal weights)
+                        initial_guess = np.array([1/n_assets] * n_assets)
+                        
+                        # Optimize based on selected objective
+                        if mpt_objective == 'Max Sharpe Ratio':
+                            result = minimize(negative_sharpe, initial_guess, method='SLSQP', 
+                                            bounds=bounds, constraints=constraints)
+                        elif mpt_objective == 'Min Volatility':
+                            result = minimize(portfolio_volatility, initial_guess, method='SLSQP',
+                                            bounds=bounds, constraints=constraints)
+                        else:  # Max Return
+                            result = minimize(negative_return, initial_guess, method='SLSQP',
+                                            bounds=bounds, constraints=constraints)
+                        
+                        if result.success:
+                            optimal_weights = result.x
+                            
+                            # Calculate portfolio metrics
+                            opt_return, opt_vol, opt_sharpe = portfolio_stats(
+                                optimal_weights, expected_returns, cov_matrix, risk_free_rate
+                            )
+                            
+                            # Display results
+                            st.markdown("#### Optimization Results")
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Expected Return", f"{opt_return:.2%}")
+                            with col2:
+                                st.metric("Volatility", f"{opt_vol:.2%}")
+                            with col3:
+                                st.metric("Sharpe Ratio", f"{opt_sharpe:.3f}")
+                            
+                            # Optimal weights
+                            st.markdown("#### Optimal Weights")
+                            weights_df = pd.DataFrame({
+                                'Asset': mpt_assets,
+                                'Weight': optimal_weights,
+                                'Weight (%)': [f"{w:.1%}" for w in optimal_weights]
+                            }).sort_values('Weight', ascending=False)
+                            
+                            st.dataframe(weights_df, hide_index=True)
+                            
+                            # Pie chart of weights
+                            fig_pie = px.pie(
+                                weights_df,
+                                values='Weight',
+                                names='Asset',
+                                title="Optimal Portfolio Allocation"
+                            )
+                            st.plotly_chart(fig_pie, width='stretch')
+                            
+                            # Compare with equal-weight portfolio
+                            st.markdown("#### Comparison with Equal-Weight Portfolio")
+                            
+                            equal_weights = np.array([1/n_assets] * n_assets)
+                            eq_return, eq_vol, eq_sharpe = portfolio_stats(
+                                equal_weights, expected_returns, cov_matrix, risk_free_rate
+                            )
+                            
+                            comparison_df = pd.DataFrame({
+                                'Portfolio': ['Optimized', 'Equal-Weight'],
+                                'Expected Return': [f"{opt_return:.2%}", f"{eq_return:.2%}"],
+                                'Volatility': [f"{opt_vol:.2%}", f"{eq_vol:.2%}"],
+                                'Sharpe Ratio': [f"{opt_sharpe:.3f}", f"{eq_sharpe:.3f}"]
+                            })
+                            
+                            st.dataframe(comparison_df, hide_index=True)
+                            
+                            if opt_sharpe > eq_sharpe:
+                                st.success(f"🎯 Optimized portfolio improves Sharpe ratio by {((opt_sharpe/eq_sharpe - 1) * 100):.1f}%")
+                            else:
+                                st.info("📊 Equal-weight portfolio shows competitive performance")
+                        
+                        else:
+                            st.error("Optimization failed. Try adjusting constraints or selecting different assets.")
+                    
+                    except Exception as e:
+                        st.error(f"Portfolio optimization failed: {str(e)}")
+                        st.info("This might be due to insufficient data or numerical issues.")
+        else:
+            st.info("Please select at least 2 assets for portfolio optimization.")
+    
+    with tab2:
+        st.markdown("### Risk Parity Portfolio")
+        st.markdown("Allocate capital based on risk contribution rather than dollar amounts.")
+        
+        # Risk parity configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            rp_assets = st.multiselect(
+                "Select Assets:",
+                summary['tickers'],
+                default=summary['tickers'][:3],
+                key="rp_assets"
+            )
+        
+        with col2:
+            rp_lookback = st.slider(
+                "Lookback Period:",
+                60, 250, 120,
+                key="rp_lookback"
+            )
+        
+        if len(rp_assets) >= 2:
+            if st.button("Calculate Risk Parity", key="calc_risk_parity"):
+                with st.spinner("Calculating risk parity weights..."):
+                    try:
+                        # Get returns data
+                        returns_data = {}
+                        for asset in rp_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            asset_returns = asset_prices.pct_change().dropna()
+                            returns_data[asset] = asset_returns.tail(rp_lookback)
+                        
+                        returns_df = pd.DataFrame(returns_data).dropna()
+                        
+                        # Calculate volatilities (simple risk parity)
+                        volatilities = returns_df.std() * np.sqrt(252)
+                        
+                        # Inverse volatility weights
+                        inv_vol_weights = 1 / volatilities
+                        risk_parity_weights = inv_vol_weights / inv_vol_weights.sum()
+                        
+                        # Display results
+                        st.markdown("#### Risk Parity Results")
+                        
+                        rp_df = pd.DataFrame({
+                            'Asset': rp_assets,
+                            'Volatility': [f"{vol:.2%}" for vol in volatilities],
+                            'Weight': risk_parity_weights.values,
+                            'Weight (%)': [f"{w:.1%}" for w in risk_parity_weights.values]
+                        }).sort_values('Weight', ascending=False)
+                        
+                        st.dataframe(rp_df, hide_index=True)
+                        
+                        # Visualization
+                        fig_rp = px.bar(
+                            rp_df,
+                            x='Asset',
+                            y='Weight',
+                            title="Risk Parity Weights",
+                            color='Weight',
+                            color_continuous_scale='viridis'
+                        )
+                        st.plotly_chart(fig_rp, width='stretch')
+                        
+                        # Risk contribution analysis
+                        st.markdown("#### Risk Contribution Analysis")
+                        
+                        # Calculate portfolio volatility and risk contributions
+                        cov_matrix = returns_df.cov() * 252
+                        portfolio_vol = np.sqrt(np.dot(risk_parity_weights.values.T, 
+                                                     np.dot(cov_matrix, risk_parity_weights.values)))
+                        
+                        risk_contributions = (risk_parity_weights.values * 
+                                            np.dot(cov_matrix, risk_parity_weights.values)) / portfolio_vol
+                        
+                        risk_contrib_df = pd.DataFrame({
+                            'Asset': rp_assets,
+                            'Risk Contribution': risk_contributions,
+                            'Risk Contrib (%)': [f"{rc:.1%}" for rc in risk_contributions]
+                        })
+                        
+                        st.dataframe(risk_contrib_df, hide_index=True)
+                        
+                        st.info(f"📊 Portfolio Volatility: {portfolio_vol:.2%}")
+                    
+                    except Exception as e:
+                        st.error(f"Risk parity calculation failed: {str(e)}")
+        else:
+            st.info("Please select at least 2 assets for risk parity analysis.")
+    
+    with tab3:
+        st.markdown("### Forecast-Based Allocation")
+        st.markdown("Allocate capital based on forecasting model predictions.")
+        
+        # Forecast-based configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fb_assets = st.multiselect(
+                "Select Assets:",
+                summary['tickers'],
+                default=summary['tickers'][:3],
+                key="fb_assets"
+            )
+            
+            fb_model = st.selectbox(
+                "Forecasting Model:",
+                ['Moving Average', 'ARIMA', 'VAR'],
+                key="fb_model"
+            )
+        
+        with col2:
+            fb_horizon = st.slider(
+                "Forecast Horizon:",
+                5, 30, 10,
+                key="fb_horizon"
+            )
+            
+            fb_allocation_method = st.selectbox(
+                "Allocation Method:",
+                ['Proportional to Expected Return', 'Rank-Based', 'Long-Short'],
+                key="fb_allocation"
+            )
+        
+        if len(fb_assets) >= 2:
+            if st.button("Generate Forecast-Based Portfolio", key="calc_forecast_portfolio"):
+                with st.spinner("Generating forecasts and calculating allocations..."):
+                    try:
+                        forecasts = {}
+                        current_prices = {}
+                        
+                        # Generate forecasts for each asset
+                        for asset in fb_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            current_price = asset_prices.iloc[-1]
+                            current_prices[asset] = current_price
+                            
+                            # Generate forecast based on selected model
+                            if fb_model == 'Moving Average':
+                                forecast = moving_average_forecast(asset_prices, window=10, forecast_steps=fb_horizon)
+                            elif fb_model == 'ARIMA':
+                                forecast = arima_forecast(asset_prices, order=(1,1,1), forecast_steps=fb_horizon)
+                            else:  # VAR
+                                if len(fb_assets) >= 2:
+                                    # Use VAR for multivariate forecast
+                                    multi_data = get_multiple_tickers_data(data, fb_assets, 'close')
+                                    var_model = VARModel(maxlags=3)
+                                    var_model.fit(multi_data)
+                                    var_forecasts, _ = var_model.predict(steps=fb_horizon)
+                                    forecast = var_forecasts[asset]
+                                else:
+                                    # Fallback to MA if only one asset
+                                    forecast = moving_average_forecast(asset_prices, window=10, forecast_steps=fb_horizon)
+                            
+                            forecasts[asset] = forecast
+                        
+                        # Calculate expected returns
+                        expected_returns = {}
+                        for asset in fb_assets:
+                            forecast_price = forecasts[asset].iloc[-1] if hasattr(forecasts[asset], 'iloc') else forecasts[asset][-1]
+                            expected_return = (forecast_price - current_prices[asset]) / current_prices[asset]
+                            expected_returns[asset] = expected_return
+                        
+                        # Calculate allocations based on method
+                        if fb_allocation_method == 'Proportional to Expected Return':
+                            # Normalize positive returns and set negative to zero
+                            pos_returns = {k: max(0, v) for k, v in expected_returns.items()}
+                            total_pos_return = sum(pos_returns.values())
+                            
+                            if total_pos_return > 0:
+                                weights = {k: v / total_pos_return for k, v in pos_returns.items()}
+                            else:
+                                # Equal weights if all returns are negative
+                                weights = {k: 1/len(fb_assets) for k in fb_assets}
+                        
+                        elif fb_allocation_method == 'Rank-Based':
+                            # Rank assets by expected return
+                            sorted_assets = sorted(expected_returns.items(), key=lambda x: x[1], reverse=True)
+                            
+                            # Assign weights: highest rank gets highest weight
+                            total_ranks = sum(range(1, len(fb_assets) + 1))
+                            weights = {}
+                            for i, (asset, _) in enumerate(sorted_assets):
+                                rank_weight = (len(fb_assets) - i) / total_ranks
+                                weights[asset] = rank_weight
+                        
+                        else:  # Long-Short
+                            # Long positive expected returns, short negative
+                            total_abs_return = sum(abs(v) for v in expected_returns.values())
+                            
+                            if total_abs_return > 0:
+                                weights = {k: v / total_abs_return for k, v in expected_returns.items()}
+                            else:
+                                weights = {k: 1/len(fb_assets) for k in fb_assets}
+                        
+                        # Display results
+                        st.markdown("#### Forecast-Based Portfolio Results")
+                        
+                        fb_df = pd.DataFrame({
+                            'Asset': fb_assets,
+                            'Current Price': [f"${current_prices[asset]:.2f}" for asset in fb_assets],
+                            'Forecast Price': [f"${forecasts[asset].iloc[-1] if hasattr(forecasts[asset], 'iloc') else forecasts[asset][-1]:.2f}" for asset in fb_assets],
+                            'Expected Return': [f"{expected_returns[asset]:.2%}" for asset in fb_assets],
+                            'Weight': [weights[asset] for asset in fb_assets],
+                            'Weight (%)': [f"{weights[asset]:.1%}" for asset in fb_assets]
+                        }).sort_values('Weight', ascending=False)
+                        
+                        st.dataframe(fb_df, hide_index=True)
+                        
+                        # Visualization
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            fig_weights = px.pie(
+                                fb_df,
+                                values='Weight',
+                                names='Asset',
+                                title="Forecast-Based Allocation"
+                            )
+                            st.plotly_chart(fig_weights, width='stretch')
+                        
+                        with col2:
+                            fig_returns = px.bar(
+                                fb_df,
+                                x='Asset',
+                                y=[float(er.strip('%'))/100 for er in fb_df['Expected Return']],
+                                title="Expected Returns by Asset",
+                                color=[float(er.strip('%'))/100 for er in fb_df['Expected Return']],
+                                color_continuous_scale='RdYlGn'
+                            )
+                            fig_returns.update_yaxis(title="Expected Return")
+                            st.plotly_chart(fig_returns, width='stretch')
+                        
+                        # Portfolio summary
+                        portfolio_expected_return = sum(weights[asset] * expected_returns[asset] for asset in fb_assets)
+                        
+                        st.markdown("#### Portfolio Summary")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Portfolio Expected Return", f"{portfolio_expected_return:.2%}")
+                        with col2:
+                            st.metric("Best Asset", fb_df.iloc[0]['Asset'])
+                        with col3:
+                            st.metric("Forecast Model", fb_model)
+                    
+                    except Exception as e:
+                        st.error(f"Forecast-based allocation failed: {str(e)}")
+        else:
+            st.info("Please select at least 2 assets for forecast-based allocation.")
+    
+    with tab4:
+        st.markdown("### Portfolio Analysis")
+        st.markdown("Analyze and compare different portfolio strategies.")
+        
+        # Portfolio comparison
+        analysis_assets = st.multiselect(
+            "Select Assets for Analysis:",
+            summary['tickers'],
+            default=summary['tickers'][:4],
+            key="analysis_assets"
+        )
+        
+        if len(analysis_assets) >= 2:
+            if st.button("Run Portfolio Analysis", key="run_portfolio_analysis"):
+                with st.spinner("Analyzing portfolio strategies..."):
+                    try:
+                        # Get data
+                        returns_data = {}
+                        prices_data = {}
+                        for asset in analysis_assets:
+                            asset_prices = get_ticker_data(data, asset, 'close')
+                            asset_returns = asset_prices.pct_change().dropna()
+                            returns_data[asset] = asset_returns.tail(120)
+                            prices_data[asset] = asset_prices.tail(120)
+                        
+                        returns_df = pd.DataFrame(returns_data).dropna()
+                        prices_df = pd.DataFrame(prices_data).dropna()
+                        
+                        # Calculate different portfolio strategies
+                        portfolios = {}
+                        
+                        # Equal Weight
+                        n_assets = len(analysis_assets)
+                        equal_weights = np.array([1/n_assets] * n_assets)
+                        portfolios['Equal Weight'] = {
+                            'weights': equal_weights,
+                            'returns': (returns_df * equal_weights).sum(axis=1)
+                        }
+                        
+                        # Market Cap Weight (approximated by price)
+                        market_weights = prices_df.iloc[-1] / prices_df.iloc[-1].sum()
+                        portfolios['Market Weight'] = {
+                            'weights': market_weights.values,
+                            'returns': (returns_df * market_weights.values).sum(axis=1)
+                        }
+                        
+                        # Inverse Volatility (Risk Parity approximation)
+                        volatilities = returns_df.std()
+                        inv_vol_weights = (1 / volatilities) / (1 / volatilities).sum()
+                        portfolios['Risk Parity'] = {
+                            'weights': inv_vol_weights.values,
+                            'returns': (returns_df * inv_vol_weights.values).sum(axis=1)
+                        }
+                        
+                        # Calculate portfolio metrics
+                        portfolio_metrics = {}
+                        for name, portfolio in portfolios.items():
+                            port_returns = portfolio['returns']
+                            
+                            annual_return = port_returns.mean() * 252
+                            annual_vol = port_returns.std() * np.sqrt(252)
+                            sharpe_ratio = annual_return / annual_vol if annual_vol > 0 else 0
+                            max_drawdown = (port_returns.cumsum().cummax() - port_returns.cumsum()).max()
+                            
+                            portfolio_metrics[name] = {
+                                'Annual Return': annual_return,
+                                'Volatility': annual_vol,
+                                'Sharpe Ratio': sharpe_ratio,
+                                'Max Drawdown': max_drawdown
+                            }
+                        
+                        # Display results
+                        st.markdown("#### Portfolio Performance Comparison")
+                        
+                        metrics_df = pd.DataFrame(portfolio_metrics).T
+                        metrics_df['Annual Return'] = metrics_df['Annual Return'].map(lambda x: f"{x:.2%}")
+                        metrics_df['Volatility'] = metrics_df['Volatility'].map(lambda x: f"{x:.2%}")
+                        metrics_df['Sharpe Ratio'] = metrics_df['Sharpe Ratio'].map(lambda x: f"{x:.3f}")
+                        metrics_df['Max Drawdown'] = metrics_df['Max Drawdown'].map(lambda x: f"{x:.2%}")
+                        
+                        st.dataframe(metrics_df)
+                        
+                        # Cumulative returns chart
+                        st.markdown("#### Cumulative Returns Comparison")
+                        
+                        fig_cumret = go.Figure()
+                        
+                        colors = ['blue', 'red', 'green', 'orange']
+                        for i, (name, portfolio) in enumerate(portfolios.items()):
+                            cumulative_returns = (1 + portfolio['returns']).cumprod()
+                            
+                            fig_cumret.add_trace(go.Scatter(
+                                x=cumulative_returns.index,
+                                y=cumulative_returns.values,
+                                mode='lines',
+                                name=name,
+                                line=dict(color=colors[i], width=2)
+                            ))
+                        
+                        fig_cumret.update_layout(
+                            title="Cumulative Returns Comparison",
+                            xaxis_title="Date",
+                            yaxis_title="Cumulative Return",
+                            height=500
+                        )
+                        
+                        st.plotly_chart(fig_cumret, width='stretch')
+                        
+                        # Portfolio weights comparison
+                        st.markdown("#### Portfolio Weights Comparison")
+                        
+                        weights_comparison = pd.DataFrame({
+                            'Asset': analysis_assets,
+                            'Equal Weight': [f"{w:.1%}" for w in portfolios['Equal Weight']['weights']],
+                            'Market Weight': [f"{w:.1%}" for w in portfolios['Market Weight']['weights']],
+                            'Risk Parity': [f"{w:.1%}" for w in portfolios['Risk Parity']['weights']]
+                        })
+                        
+                        st.dataframe(weights_comparison, hide_index=True)
+                        
+                        # Best performing portfolio
+                        numeric_metrics = {name: metrics['Sharpe Ratio'] for name, metrics in portfolio_metrics.items()}
+                        best_portfolio = max(numeric_metrics, key=numeric_metrics.get)
+                        
+                        st.success(f"🏆 Best Performing Strategy: **{best_portfolio}** (Sharpe: {numeric_metrics[best_portfolio]:.3f})")
+                    
+                    except Exception as e:
+                        st.error(f"Portfolio analysis failed: {str(e)}")
+        else:
+            st.info("Please select at least 2 assets for portfolio analysis.")
+    
+    # Educational content
+    st.markdown("---")
+    st.markdown("### 📚 Portfolio Optimization Guide")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        **Modern Portfolio Theory:**
+        - Balances risk and return
+        - Uses historical correlations
+        - Assumes normal distributions
+        - Best for stable markets
+        """)
+    
+    with col2:
+        st.markdown("""
+        **Risk Parity:**
+        - Equal risk contribution
+        - Diversifies risk sources
+        - Less sensitive to correlations
+        - Good for volatile markets
+        """)
+    
+    st.info("""
+    💡 **Tip:** Combine multiple approaches and rebalance regularly. 
+    No single strategy works in all market conditions.
+    """)
 
 
 def page_backtesting():
